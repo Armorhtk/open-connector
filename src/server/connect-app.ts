@@ -25,6 +25,7 @@ export interface ConnectAppOptions {
   secretCodec: ISecretCodec;
   adminToken?: string;
   runtimeToken?: string;
+  allowedCustomOAuth?: string[];
   verifyRuntimeJwt?: RuntimeJwtVerifier;
   actionPolicy?: ActionPolicyService;
   registerStaticRoutes?: (app: Hono) => void;
@@ -41,10 +42,14 @@ export interface ConnectApp {
 export async function createConnectApp(options: ConnectAppOptions): Promise<ConnectApp> {
   const runtimeTokens = new RuntimeTokenService(options.runtimeDatabase.runtimeTokenStore, options.logger);
   const hasStoredRuntimeTokens = async (): Promise<boolean> => (await runtimeTokens.listTokens()).length > 0;
+  const allowedCustomOAuth = new Set(options.allowedCustomOAuth);
+  const isCustomClientConfigAllowed = (service: string): boolean =>
+    allowedCustomOAuth.has("*") || allowedCustomOAuth.has(service);
   const oauthClientConfigs = new OAuthClientConfigService({
     catalog: options.catalog,
     origin: options.publicOrigin,
     store: options.runtimeDatabase.oauthClientConfigStore,
+    isCustomClientConfigAvailable: (service) => options.secretCodec.encrypted && isCustomClientConfigAllowed(service),
   });
   const connections = new ConnectionService({
     catalog: options.catalog,
@@ -73,6 +78,8 @@ export async function createConnectApp(options: ConnectAppOptions): Promise<Conn
         clientConfigs: oauthClientConfigs,
         connections,
         states: options.runtimeDatabase.oauthStateStore,
+        secretCodec: options.secretCodec,
+        isCustomClientConfigAllowed,
       }),
       actions,
       idempotency: options.runtimeDatabase.idempotencyStore,

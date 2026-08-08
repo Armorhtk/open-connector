@@ -1,6 +1,7 @@
 import type { CatalogStore } from "../catalog-store.ts";
 import type { OAuth2AuthDefinition, OAuthClientConfigFieldDefinition } from "../core/types.ts";
 
+import { optionalRecord, optionalString } from "../core/cast.ts";
 import { normalizeCredentialValues } from "../core/credential-fields.ts";
 import { assertPublicHttpUrl } from "../core/request.ts";
 
@@ -15,17 +16,32 @@ export type OAuthClientConfig = {
   secretExtra: Record<string, string>;
 };
 
+export interface OAuthClientConfigInput {
+  clientId: string;
+  clientSecret: string;
+  extra?: Record<string, unknown>;
+  secretExtra?: Record<string, unknown>;
+}
+
 /**
  * OAuth client config summary safe to return to the local console.
  */
-export type OAuthClientConfigSummary = {
+export interface OAuthClientConfigSummary {
   service: string;
   configured: boolean;
+  customClientAvailable: boolean;
   clientId: string | null;
   expectedRedirectUri: string;
   auth: OAuth2AuthDefinition;
   extra: Record<string, string>;
-};
+}
+
+export interface OAuthClientConfigServiceOptions {
+  catalog: CatalogStore;
+  origin: string;
+  store: IOAuthClientConfigStore;
+  isCustomClientConfigAvailable?: (service: string) => boolean;
+}
 
 /**
  * Storage contract for local OAuth client configs.
@@ -49,11 +65,13 @@ export class OAuthClientConfigService {
   private readonly catalog: CatalogStore;
   private readonly origin: string;
   private readonly store: IOAuthClientConfigStore;
+  private readonly isCustomClientConfigAvailable: (service: string) => boolean;
 
-  constructor(input: { catalog: CatalogStore; origin: string; store: IOAuthClientConfigStore }) {
+  constructor(input: OAuthClientConfigServiceOptions) {
     this.catalog = input.catalog;
     this.origin = input.origin.replace(/\/$/, "");
     this.store = input.store;
+    this.isCustomClientConfigAvailable = input.isCustomClientConfigAvailable ?? (() => false);
   }
 
   async listConfigs(): Promise<OAuthClientConfigSummary[]> {
@@ -75,7 +93,13 @@ export class OAuthClientConfigService {
     extra?: Record<string, unknown>;
     secretExtra?: Record<string, unknown>;
   }): Promise<OAuthClientConfigSummary> {
-    const auth = this.getOAuthDefinition(input.service);
+    const config = this.normalizeConfig(input.service, input);
+    await this.store.set(config);
+    return this.toSummary(input.service, this.getOAuthDefinition(input.service), config);
+  }
+
+  normalizeConfig(service: string, input: OAuthClientConfigInput): OAuthClientConfig {
+    const auth = this.getOAuthDefinition(service);
     const clientId = input.clientId.trim();
     const clientSecret = input.clientSecret.trim();
     if (!clientId) {
@@ -87,7 +111,7 @@ export class OAuthClientConfigService {
 
     const submittedExtra = input.extra ?? {};
     const config: OAuthClientConfig = {
-      service: input.service,
+      service,
       clientId,
       clientSecret,
       extra: normalizeCredentialValues({
@@ -105,8 +129,7 @@ export class OAuthClientConfigService {
       }),
     };
     assertNoUnexpectedClientConfigFields(auth.clientConfigFields, submittedExtra, input.secretExtra ?? {});
-    await this.store.set(config);
-    return this.toSummary(input.service, auth, config);
+    return config;
   }
 
   async deleteConfig(service: string): Promise<{ service: string; configured: false }> {
@@ -162,12 +185,33 @@ export class OAuthClientConfigService {
     return {
       service,
       configured: config != null,
+      customClientAvailable: this.isCustomClientConfigAvailable(service),
       clientId: config?.clientId ?? null,
       expectedRedirectUri: this.expectedRedirectUri(service),
       auth,
       extra: config?.extra ?? {},
     };
   }
+}
+
+/** Read a connection-scoped OAuth client config stored in credential metadata. */
+export function readOAuthClientConfigMetadata(
+  service: string,
+  metadata: Record<string, unknown>,
+): OAuthClientConfig | undefined {
+  const value = optionalRecord(metadata.oauthClientConfig);
+  const clientId = optionalString(value?.clientId);
+  if (!clientId) {
+    return undefined;
+  }
+
+  return {
+    service,
+    clientId,
+    clientSecret: optionalString(value?.clientSecret) ?? "",
+    extra: readStringRecord(value?.extra),
+    secretExtra: readStringRecord(value?.secretExtra),
+  };
 }
 
 /**
@@ -223,6 +267,20 @@ function normalizeStoredOAuthClientConfig(config: OAuthClientConfig | undefined)
     ...config,
     secretExtra: config.secretExtra ?? {},
   };
+}
+
+function readStringRecord(value: unknown): Record<string, string> {
+  const record = optionalRecord(value);
+  if (!record) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(record).flatMap(([key, item]) => {
+      const normalized = optionalString(item);
+      return normalized ? [[key, normalized]] : [];
+    }),
+  );
 }
 
 function assertOAuthEndpointUrl(value: string): void {

@@ -336,6 +336,9 @@ export function createOpenApiDocument(
             configured: jsonSchema.boolean({
               description: "Whether a local OAuth client config is configured.",
             }),
+            customClientAvailable: jsonSchema.boolean({
+              description: "Whether the console may use a connection-scoped OAuth client for this provider.",
+            }),
             clientId: jsonSchema.nullable(jsonSchema.string({ description: "Configured OAuth client id." })),
             expectedRedirectUri: jsonSchema.string({
               description: "Callback URL to configure in the provider OAuth app.",
@@ -343,7 +346,7 @@ export function createOpenApiDocument(
             auth: jsonSchema.unknownObject("Provider OAuth capability metadata."),
           },
           {
-            required: ["service", "configured", "clientId", "expectedRedirectUri", "auth"],
+            required: ["service", "configured", "customClientAvailable", "clientId", "expectedRedirectUri", "auth"],
             description: "OAuth client config summary safe for the local console.",
           },
         ),
@@ -1009,6 +1012,8 @@ function createOAuthAuthorizationPath(): Record<string, unknown> {
     post: {
       tags: ["OAuth"],
       summary: "Start provider OAuth authorization.",
+      description:
+        "The console may provide a connection-scoped OAuth app through clientId/clientSecret and provider-declared extra fields. The provider must be enabled through OOMOL_CONNECT_ALLOWED_CUSTOM_OAUTH and pending OAuth state requires OOMOL_CONNECT_ENCRYPTION_KEY.",
       requestBody: {
         required: true,
         content: {
@@ -1019,6 +1024,20 @@ function createOAuthAuthorizationPath(): Record<string, unknown> {
                 connectionName: jsonSchema.string({
                   description: "Optional local connection name. Defaults to default.",
                 }),
+                clientId: jsonSchema.string({ description: "Optional connection-scoped OAuth app client id." }),
+                clientSecret: jsonSchema.string({
+                  description: "Optional connection-scoped OAuth app client secret.",
+                }),
+                extra: {
+                  type: "object",
+                  additionalProperties: { type: "string" },
+                  description: "Provider-declared non-secret OAuth client fields.",
+                },
+                secretExtra: {
+                  type: "object",
+                  additionalProperties: { type: "string" },
+                  description: "Provider-declared secret OAuth client fields.",
+                },
               },
               {
                 required: ["service"],
