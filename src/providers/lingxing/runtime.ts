@@ -1,4 +1,4 @@
-import type { CredentialValidationResult } from "../../core/types.ts";
+import type { CredentialValidationResult, ExecutionResult } from "../../core/types.ts";
 import type { ProviderFetch, ProviderRuntimeHandler } from "../provider-runtime.ts";
 
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
@@ -9,7 +9,7 @@ import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validatio
 import { createHash } from "node:crypto";
 import { optionalRecord, requiredString } from "../../core/cast.ts";
 import { assertPublicHttpUrl } from "../../core/request.ts";
-import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import { providerUserAgent, ProviderRequestError, toProviderExecutionError } from "../provider-runtime.ts";
 
 const lingxingMcpHost = "openmcp.lingxing.com";
 const lingxingRequestTimeoutMs = 30_000;
@@ -27,25 +27,25 @@ export interface LingxingContext extends LingxingCredential {
   signal?: AbortSignal;
 }
 
-interface LingxingToolRateLimiterOptions {
+interface LingxingMcpRateLimiterOptions {
   now?: () => number;
   sleep?: (milliseconds: number) => Promise<void>;
 }
 
-export interface LingxingToolRateLimiter {
+export interface LingxingMcpRateLimiter {
   run<T>(key: string, task: () => Promise<T>): Promise<T>;
 }
 
 type LingxingRequestPhase = "validate" | "execute";
 type LingxingMcpToolResult = Awaited<ReturnType<Client["callTool"]>>;
 
-class InMemoryLingxingToolRateLimiter implements LingxingToolRateLimiter {
+class InMemoryLingxingMcpRateLimiter implements LingxingMcpRateLimiter {
   private readonly nextStartByKey = new Map<string, number>();
   private readonly tails = new Map<string, Promise<unknown>>();
   private readonly now: () => number;
   private readonly sleep: (milliseconds: number) => Promise<void>;
 
-  constructor(options: LingxingToolRateLimiterOptions) {
+  constructor(options: LingxingMcpRateLimiterOptions) {
     this.now = options.now ?? Date.now;
     this.sleep =
       options.sleep ?? ((milliseconds) => new Promise<void>((resolve) => globalThis.setTimeout(resolve, milliseconds)));
@@ -62,6 +62,7 @@ class InMemoryLingxingToolRateLimiter implements LingxingToolRateLimiter {
         if (waitMs > 0) {
           await this.sleep(waitMs);
         }
+        this.nextStartByKey.delete(key);
         this.nextStartByKey.set(key, this.now() + lingxingToolIntervalMs);
         return await task();
       });
@@ -88,7 +89,16 @@ class InMemoryLingxingToolRateLimiter implements LingxingToolRateLimiter {
   }
 }
 
-const lingxingToolRateLimiter = createLingxingToolRateLimiter();
+const lingxingMcpRateLimiter = createLingxingMcpRateLimiter();
+
+class LingxingRequestError extends ProviderRequestError {
+  readonly code: string;
+
+  constructor(code: string, status: number, message: string, details?: unknown) {
+    super(status, message, details);
+    this.code = code;
+  }
+}
 
 export const lingxingActionHandlers: Record<string, ProviderRuntimeHandler<LingxingContext>> = {
   list_tools(_input, context) {
@@ -99,8 +109,17 @@ export const lingxingActionHandlers: Record<string, ProviderRuntimeHandler<Lingx
   },
 };
 
-export function createLingxingToolRateLimiter(options: LingxingToolRateLimiterOptions = {}): LingxingToolRateLimiter {
-  return new InMemoryLingxingToolRateLimiter(options);
+export function createLingxingMcpRateLimiter(options: LingxingMcpRateLimiterOptions = {}): LingxingMcpRateLimiter {
+  return new InMemoryLingxingMcpRateLimiter(options);
+}
+
+export function createLingxingRateLimitedFetch(
+  fetcher: ProviderFetch,
+  rateLimitKey: string,
+  rateLimiter: LingxingMcpRateLimiter = lingxingMcpRateLimiter,
+): ProviderFetch {
+  return ((...arguments_: Parameters<ProviderFetch>) =>
+    rateLimiter.run(rateLimitKey, () => fetcher(...arguments_))) as ProviderFetch;
 }
 
 export function createLingxingContext(
@@ -176,6 +195,7 @@ export async function listLingxingTools(context: LingxingContext): Promise<{
   tools: Array<{
     name: string;
     description?: string;
+    annotations?: Record<string, unknown>;
     inputSchema: Record<string, unknown>;
   }>;
 }> {
@@ -190,24 +210,21 @@ export async function callLingxingTool(
 ): Promise<{ result: unknown }> {
   const toolName = requiredString(input.toolName, "toolName", (message) => new ProviderRequestError(400, message));
   const argumentsValue = readToolArguments(input.arguments);
-  const rateLimitKey = hashLingxingRateLimitKey(context, toolName);
-  const result = await lingxingToolRateLimiter.run(rateLimitKey, () =>
-    runLingxingMcp("execute", () =>
-      withLingxingMcpClient(context, async (client) => {
-        const toolResult = await client.callTool(
-          {
-            name: toolName,
-            arguments: argumentsValue,
-          },
-          undefined,
-          {
-            timeout: lingxingRequestTimeoutMs,
-            signal: context.signal,
-          },
-        );
-        return normalizeLingxingMcpToolResult(toolName, toolResult);
-      }),
-    ),
+  const result = await runLingxingMcp("execute", () =>
+    withLingxingMcpClient(context, async (client) => {
+      const toolResult = await client.callTool(
+        {
+          name: toolName,
+          arguments: argumentsValue,
+        },
+        undefined,
+        {
+          timeout: lingxingRequestTimeoutMs,
+          signal: context.signal,
+        },
+      );
+      return normalizeLingxingMcpToolResult(toolName, toolResult);
+    }),
   );
   return { result };
 }
@@ -216,6 +233,7 @@ async function discoverLingxingTools(context: LingxingContext): Promise<
   Array<{
     name: string;
     description?: string;
+    annotations?: Record<string, unknown>;
     inputSchema: Record<string, unknown>;
   }>
 > {
@@ -231,6 +249,7 @@ async function discoverLingxingTools(context: LingxingContext): Promise<
       const summary: {
         name: string;
         description?: string;
+        annotations?: Record<string, unknown>;
         inputSchema: Record<string, unknown>;
       } = {
         name: tool.name,
@@ -238,6 +257,9 @@ async function discoverLingxingTools(context: LingxingContext): Promise<
       };
       if (tool.description) {
         summary.description = tool.description;
+      }
+      if (tool.annotations) {
+        summary.annotations = tool.annotations;
       }
       return summary;
     });
@@ -249,7 +271,7 @@ async function withLingxingMcpClient<T>(context: LingxingContext, run: (client: 
   headers.set("X-Mcp-Key", context.mcpKey);
   headers.set("user-agent", providerUserAgent);
   const transport = new StreamableHTTPClientTransport(context.endpoint, {
-    fetch: context.fetcher,
+    fetch: createLingxingRateLimitedFetch(context.fetcher, hashLingxingRateLimitKey(context)),
     requestInit: {
       headers,
       redirect: "error",
@@ -375,7 +397,8 @@ async function runLingxingMcp<T>(phase: LingxingRequestPhase, run: () => Promise
     return await run();
   } catch (error) {
     if (error instanceof ProviderRequestError && error.status === 401) {
-      throw new ProviderRequestError(
+      throw new LingxingRequestError(
+        phase === "validate" ? "invalid_input" : "credential_expired",
         phase === "validate" ? 400 : 401,
         "Lingxing MCP Server URL or X-Mcp-Key is invalid",
         error,
@@ -386,22 +409,29 @@ async function runLingxingMcp<T>(phase: LingxingRequestPhase, run: () => Promise
 }
 
 function hashLingxingCredential(credential: LingxingCredential): string {
-  return createHash("sha256")
-    .update(credential.endpoint.toString())
-    .update("\0")
-    .update(credential.mcpKey)
-    .digest("hex")
-    .slice(0, 16);
+  return createHash("sha256").update(credential.endpoint.toString()).digest("hex").slice(0, 16);
 }
 
-function hashLingxingRateLimitKey(credential: LingxingCredential, toolName: string): string {
+function hashLingxingRateLimitKey(credential: LingxingCredential): string {
   return createHash("sha256")
     .update(credential.endpoint.toString())
     .update("\0")
     .update(credential.mcpKey)
-    .update("\0")
-    .update(toolName)
     .digest("hex");
+}
+
+export function toLingxingExecutionError(error: unknown): ExecutionResult {
+  if (error instanceof LingxingRequestError) {
+    return {
+      ok: false,
+      error: {
+        code: error.code,
+        message: error.message,
+        details: { status: error.status, details: error.details },
+      },
+    };
+  }
+  return toProviderExecutionError(error, "Lingxing MCP request failed");
 }
 
 function isAbortError(error: unknown): boolean {
