@@ -6,14 +6,14 @@ import type {
   ProxyExecutionResult,
 } from "../../core/types.ts";
 import type { FlomoActionName, FlomoMcpToolName } from "./actions.ts";
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { McpError } from "@modelcontextprotocol/sdk/types.js";
-import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
 import { createHash } from "node:crypto";
 import { optionalString, requiredString } from "../../core/cast.ts";
+import { withMcpClient } from "../mcp-client.ts";
 import {
   createProviderProxyUrl,
   defineProviderExecutors,
@@ -31,7 +31,6 @@ const flomoWebhookPathPrefix = "/iwh/";
 const flomoMcpEndpoint = "https://flomoapp.com/mcp";
 const flomoMcpTokenField = "token";
 const flomoRequestTimeoutMs = 30_000;
-const flomoMcpJsonSchemaValidator = new CfWorkerJsonSchemaValidator();
 
 type FlomoActionHandler = (input: Record<string, unknown>, context: FlomoActionContext) => Promise<unknown>;
 type FlomoMcpToolResult = Awaited<ReturnType<Client["callTool"]>>;
@@ -436,31 +435,17 @@ async function withFlomoMcpClient<T>(
   headers.set("Authorization", `Bearer ${input.token}`);
   headers.set("user-agent", providerUserAgent);
 
-  const transport = new StreamableHTTPClientTransport(new URL(flomoMcpEndpoint), {
-    fetch: input.fetcher,
-    requestInit: {
+  return withMcpClient(
+    {
+      endpoint: new URL(flomoMcpEndpoint),
+      transport: "streamable_http",
+      fetcher: input.fetcher,
       headers,
       signal: input.signal,
+      mapError: mapFlomoMcpError,
     },
-  });
-  const client = new Client(
-    {
-      name: "oomol-connect-flomo",
-      version: "1.0.0",
-    },
-    { jsonSchemaValidator: flomoMcpJsonSchemaValidator },
+    run,
   );
-
-  try {
-    await client.connect(transport, {
-      timeout: flomoRequestTimeoutMs,
-    });
-    return await run(client);
-  } catch (error) {
-    throw mapFlomoMcpError(error);
-  } finally {
-    await client.close().catch(() => undefined);
-  }
 }
 
 function normalizeMcpToolResult(toolName: string, result: FlomoMcpToolResult): unknown {

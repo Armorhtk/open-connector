@@ -1,14 +1,13 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { SSEClientTransport, SseError } from "@modelcontextprotocol/sdk/client/sse.js";
-import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { SseError } from "@modelcontextprotocol/sdk/client/sse.js";
 import { McpError } from "@modelcontextprotocol/sdk/types.js";
-import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
 import { createHash } from "node:crypto";
 import { requiredString } from "../../core/cast.ts";
 import { assertPublicHttpUrl, isPrivateNetworkAccessAllowed } from "../../core/request.ts";
+import { withMcpClient } from "../mcp-client.ts";
 import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 import { jumpServerMcpToolNames } from "./actions.ts";
 
@@ -23,7 +22,6 @@ export interface JumpServerMcpContext {
 }
 
 const requestTimeoutMs = 60_000;
-const jumpServerMcpJsonSchemaValidator = new CfWorkerJsonSchemaValidator();
 
 export const jumpServerActionHandlers: Record<string, JumpServerActionHandler> = {};
 for (const toolName of jumpServerMcpToolNames) {
@@ -126,58 +124,17 @@ async function withJumpServerMcpClient<T>(
     Authorization: `Bearer ${context.token}`,
     "user-agent": providerUserAgent,
   });
-  let client: Client | undefined;
-
-  try {
-    client = await connectJumpServerMcpClient(context, headers);
-    return await run(client);
-  } catch (error) {
-    throw mapJumpServerMcpError(error);
-  } finally {
-    await client?.close().catch(() => undefined);
-  }
-}
-
-async function connectJumpServerMcpClient(context: JumpServerMcpContext, headers: Headers): Promise<Client> {
-  const streamableClient = createJumpServerMcpClient();
-  const streamableTransport = new StreamableHTTPClientTransport(context.endpoint, {
-    fetch: context.fetcher,
-    requestInit: { headers, signal: context.signal },
-  });
-
-  try {
-    await streamableClient.connect(streamableTransport, { timeout: requestTimeoutMs });
-    return streamableClient;
-  } catch (error) {
-    await streamableClient.close().catch(() => undefined);
-    if (!isUnsupportedStreamableHttp(error)) {
-      throw error;
-    }
-  }
-
-  const legacyClient = createJumpServerMcpClient();
-  const legacyTransport = new SSEClientTransport(context.endpoint, {
-    fetch: context.fetcher,
-    requestInit: { headers, signal: context.signal },
-  });
-  try {
-    await legacyClient.connect(legacyTransport, { timeout: requestTimeoutMs });
-    return legacyClient;
-  } catch (error) {
-    await legacyClient.close().catch(() => undefined);
-    throw error;
-  }
-}
-
-function createJumpServerMcpClient(): Client {
-  return new Client(
-    { name: "oomol-connect-jumpserver", version: "1.0.0" },
-    { jsonSchemaValidator: jumpServerMcpJsonSchemaValidator },
+  return withMcpClient(
+    {
+      endpoint: context.endpoint,
+      transport: "sse",
+      fetcher: context.fetcher,
+      headers,
+      signal: context.signal,
+      mapError: mapJumpServerMcpError,
+    },
+    run,
   );
-}
-
-function isUnsupportedStreamableHttp(error: unknown): boolean {
-  return error instanceof StreamableHTTPError && (error.code === 404 || error.code === 405);
 }
 
 function normalizeJumpServerMcpToolResult(toolName: string, result: JumpServerMcpToolResult): unknown {
@@ -223,7 +180,7 @@ function mapJumpServerMcpError(error: unknown): ProviderRequestError {
   if (error instanceof UnauthorizedError) {
     return new ProviderRequestError(401, "JumpServer MCP token is invalid or expired", error);
   }
-  if (error instanceof SseError || error instanceof StreamableHTTPError) {
+  if (error instanceof SseError) {
     const status = error.code;
     return new ProviderRequestError(
       status === 401 || status === 403 ? 401 : status && status >= 400 && status < 500 ? 400 : 502,

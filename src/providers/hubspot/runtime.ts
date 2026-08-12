@@ -1,9 +1,11 @@
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
+
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { McpError } from "@modelcontextprotocol/sdk/types.js";
 import { createHash } from "node:crypto";
 import { compactObject } from "../../core/cast.ts";
+import { withMcpClient } from "../mcp-client.ts";
 import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 import { hubspotConnectorScopes } from "./actions.ts";
 
@@ -613,7 +615,6 @@ async function callHubspotMcpTool(input: HubspotMcpToolCallInput) {
       endpoint: hubspotMcpEndpoint,
       bearerToken: input.accessToken,
       service: "hubspot",
-      clientName: "oomol-connector-hubspot",
       fetcher: input.fetcher,
       requestTimeoutMs: hubspotMcpRequestTimeoutMs,
       toolName: input.toolName,
@@ -632,7 +633,6 @@ async function callStreamableHttpMcpTool(input: {
   endpoint: string;
   bearerToken: string;
   service: string;
-  clientName: string;
   fetcher: typeof fetch;
   requestTimeoutMs: number;
   toolName: string;
@@ -642,36 +642,26 @@ async function callStreamableHttpMcpTool(input: {
   headers.set("authorization", `Bearer ${input.bearerToken}`);
   headers.set("user-agent", providerUserAgent);
 
-  const transport = new StreamableHTTPClientTransport(new URL(input.endpoint), {
-    fetch: input.fetcher,
-    requestInit: {
+  return withMcpClient(
+    {
+      endpoint: new URL(input.endpoint),
+      transport: "streamable_http",
+      fetcher: input.fetcher,
       headers,
+      mapError: (error) => mapHubspotMcpError(input.service, error),
     },
-  });
-  const client = new Client({
-    name: input.clientName,
-    version: "1.0.0",
-  });
-
-  try {
-    await client.connect(transport, {
-      timeout: input.requestTimeoutMs,
-    });
-    return await client.callTool(
-      {
-        name: input.toolName,
-        arguments: input.arguments,
-      },
-      undefined,
-      {
-        timeout: input.requestTimeoutMs,
-      },
-    );
-  } catch (error) {
-    throw mapHubspotMcpError(input.service, error);
-  } finally {
-    await client.close().catch(() => undefined);
-  }
+    (client) =>
+      client.callTool(
+        {
+          name: input.toolName,
+          arguments: input.arguments,
+        },
+        undefined,
+        {
+          timeout: input.requestTimeoutMs,
+        },
+      ),
+  );
 }
 
 function mapHubspotMcpError(service: string, error: unknown): ProviderRequestError {

@@ -1,14 +1,14 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
 import type { ProviderFetch, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
-import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
 import { createHash } from "node:crypto";
 import { optionalRecord, optionalString } from "../../core/cast.ts";
 import { assertPublicHttpUrl, isPrivateNetworkAccessAllowed } from "../../core/request.ts";
+import { withMcpClient } from "../mcp-client.ts";
 import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 export interface WandbMcpContext {
@@ -23,7 +23,6 @@ type WandbMcpToolResult = Awaited<ReturnType<Client["callTool"]>>;
 
 const defaultEndpoint = "https://mcp.withwandb.com/mcp";
 const requestTimeoutMs = 60_000;
-const wandbMcpJsonSchemaValidator = new CfWorkerJsonSchemaValidator();
 
 export const wandbMcpTools: Record<string, string> = {
   query_weave_traces: "query_weave_traces_tool",
@@ -162,23 +161,17 @@ async function withWandbMcpClient<T>(context: WandbMcpContext, run: (client: Cli
     authorization: `Bearer ${context.apiKey}`,
     "user-agent": providerUserAgent,
   });
-  const transport = new StreamableHTTPClientTransport(context.endpoint, {
-    fetch: context.fetcher,
-    requestInit: { headers },
-  });
-  const client = new Client(
-    { name: "oomol-connect-wandb", version: "1.0.0" },
-    { jsonSchemaValidator: wandbMcpJsonSchemaValidator },
+  return withMcpClient(
+    {
+      endpoint: context.endpoint,
+      transport: "streamable_http",
+      fetcher: context.fetcher,
+      headers,
+      signal: context.signal,
+      mapError: mapWandbMcpError,
+    },
+    run,
   );
-
-  try {
-    await client.connect(transport, { timeout: requestTimeoutMs, signal: context.signal });
-    return await run(client);
-  } catch (error) {
-    throw mapWandbMcpError(error);
-  } finally {
-    await client.close().catch(() => undefined);
-  }
 }
 
 function normalizeWandbMcpToolResult(toolName: string, result: WandbMcpToolResult): unknown {

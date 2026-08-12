@@ -1,14 +1,15 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
 import type { OAuthProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation";
 
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { McpError } from "@modelcontextprotocol/sdk/types.js";
 import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
 import { createHash } from "node:crypto";
 import { optionalRecord, requiredString } from "../../core/cast.ts";
+import { withMcpClient } from "../mcp-client.ts";
 import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 export const helium10McpEndpoint = "https://mcp.helium10.com/mcp";
@@ -107,28 +108,29 @@ async function withClient<T>(
   context: Pick<OAuthProviderContext, "accessToken" | "fetcher" | "signal">,
   run: (client: Client) => Promise<T>,
 ): Promise<T> {
-  const transport = new StreamableHTTPClientTransport(new URL(helium10McpEndpoint), {
-    fetch: context.fetcher,
-    requestInit: { headers: { authorization: `Bearer ${context.accessToken}`, "user-agent": providerUserAgent } },
-  });
-  const client = new Client({ name: "oomol-connect-helium10", version: "1.0.0" }, { jsonSchemaValidator: validator });
-  try {
-    await client.connect(transport, { timeout: requestTimeoutMs, signal: context.signal });
-    return await run(client);
-  } catch (error) {
-    if (error instanceof UnauthorizedError)
-      throw new ProviderRequestError(401, "Helium 10 authorization is invalid or expired");
-    if (error instanceof StreamableHTTPError)
-      throw new ProviderRequestError(
-        error.code === 429 ? 429 : error.code === 401 || error.code === 403 ? 401 : 502,
-        `Helium 10 MCP request failed: ${error.message}`,
-      );
-    if (error instanceof McpError)
-      throw new ProviderRequestError(502, `Helium 10 MCP request failed: ${error.message}`);
-    throw error;
-  } finally {
-    await client.close().catch(() => undefined);
-  }
+  return withMcpClient(
+    {
+      endpoint: new URL(helium10McpEndpoint),
+      transport: "streamable_http",
+      fetcher: context.fetcher,
+      headers: { authorization: `Bearer ${context.accessToken}`, "user-agent": providerUserAgent },
+      signal: context.signal,
+      mapError: mapHelium10McpError,
+    },
+    run,
+  );
+}
+
+function mapHelium10McpError(error: unknown): unknown {
+  if (error instanceof UnauthorizedError)
+    return new ProviderRequestError(401, "Helium 10 authorization is invalid or expired");
+  if (error instanceof StreamableHTTPError)
+    return new ProviderRequestError(
+      error.code === 429 ? 429 : error.code === 401 || error.code === 403 ? 401 : 502,
+      `Helium 10 MCP request failed: ${error.message}`,
+    );
+  if (error instanceof McpError) return new ProviderRequestError(502, `Helium 10 MCP request failed: ${error.message}`);
+  return error;
 }
 
 function validateArguments(tool: Tool, args: Record<string, unknown>): void {

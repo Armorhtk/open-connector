@@ -1,12 +1,12 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
 import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { McpError } from "@modelcontextprotocol/sdk/types.js";
-import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
 import { createHash } from "node:crypto";
+import { withMcpClient } from "../mcp-client.ts";
 import {
   defineApiKeyProviderExecutors,
   defineProviderProxy,
@@ -18,7 +18,6 @@ const service = "luckin_coffee";
 const luckinMcpOrigin = "https://gwmcp.lkcoffee.com";
 const luckinMcpEndpoint = "https://gwmcp.lkcoffee.com/order/user/mcp";
 const luckinRequestTimeoutMs = 60_000;
-const luckinMcpJsonSchemaValidator = new CfWorkerJsonSchemaValidator();
 
 type LuckinActionContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
 type LuckinActionHandler = (input: Record<string, unknown>, context: LuckinActionContext) => Promise<unknown>;
@@ -112,23 +111,17 @@ async function withLuckinMcpClient<T>(
   const headers = new Headers();
   headers.set("authorization", `Bearer ${input.apiKey}`);
   headers.set("user-agent", providerUserAgent);
-  const transport = new StreamableHTTPClientTransport(new URL(luckinMcpEndpoint), {
-    fetch: input.fetcher,
-    requestInit: { headers, signal: input.signal },
-  });
-  const client = new Client(
-    { name: "oomol-connect-luckin-coffee", version: "1.0.0" },
-    { jsonSchemaValidator: luckinMcpJsonSchemaValidator },
+  return withMcpClient(
+    {
+      endpoint: new URL(luckinMcpEndpoint),
+      transport: "streamable_http",
+      fetcher: input.fetcher,
+      headers,
+      signal: input.signal,
+      mapError: mapLuckinMcpError,
+    },
+    run,
   );
-
-  try {
-    await client.connect(transport, { timeout: luckinRequestTimeoutMs });
-    return await run(client);
-  } catch (error) {
-    throw mapLuckinMcpError(error);
-  } finally {
-    await client.close().catch(() => undefined);
-  }
 }
 
 function normalizeLuckinMcpToolResult(toolName: string, result: LuckinMcpToolResult): unknown {

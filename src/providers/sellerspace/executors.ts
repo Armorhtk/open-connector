@@ -1,37 +1,30 @@
 import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
 import type { ApiKeyProviderContext } from "../provider-runtime.ts";
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
 import { createHash } from "node:crypto";
+import { withMcpClient } from "../mcp-client.ts";
 import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 import { sellerspaceToolNameByAction } from "./actions.ts";
 
 const service = "sellerspace";
 const endpoint = "https://www.sellerspace.com/mcp/";
 const timeoutMs = 60_000;
-const validator = new CfWorkerJsonSchemaValidator();
 const approved = new Set([...Object.values(sellerspaceToolNameByAction), "discover_capabilities"]);
 type McpResult = Awaited<ReturnType<Client["callTool"]>>;
 
 async function withClient<T>(context: ApiKeyProviderContext, run: (client: Client) => Promise<T>): Promise<T> {
-  const transport = new StreamableHTTPClientTransport(new URL(endpoint), {
-    fetch: context.fetcher,
-    requestInit: { headers: { "x-api-key": context.apiKey, "user-agent": providerUserAgent } },
-  });
-  const client = new Client(
-    { name: "oomol-connect-sellerspace", version: "1.0.0" },
-    { jsonSchemaValidator: validator },
+  return withMcpClient(
+    {
+      endpoint: new URL(endpoint),
+      transport: "streamable_http",
+      fetcher: context.fetcher,
+      headers: { "x-api-key": context.apiKey, "user-agent": providerUserAgent },
+      signal: context.signal,
+      mapError,
+    },
+    run,
   );
-  try {
-    await client.connect(transport, { timeout: timeoutMs, signal: context.signal });
-    return await run(client);
-  } catch (error) {
-    throw mapError(error);
-  } finally {
-    await client.close().catch(() => undefined);
-  }
 }
 
 function normalize(result: McpResult): unknown {

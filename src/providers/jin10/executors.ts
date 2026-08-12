@@ -1,13 +1,13 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
 import type { ApiKeyProviderContext } from "../provider-runtime.ts";
 import type { Jin10ActionName } from "./actions.ts";
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { McpError } from "@modelcontextprotocol/sdk/types.js";
-import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
 import { createHash } from "node:crypto";
+import { withMcpClient } from "../mcp-client.ts";
 import {
   defineApiKeyProviderExecutors,
   defineProviderProxy,
@@ -20,7 +20,6 @@ const jin10McpOrigin = "https://mcp.jin10.com";
 const jin10McpEndpoint = "https://mcp.jin10.com/mcp";
 const jin10QuoteCodesResourceUri = "quote://codes";
 const jin10RequestTimeoutMs = 30_000;
-const jin10McpJsonSchemaValidator = new CfWorkerJsonSchemaValidator();
 
 type Jin10ActionContext = Pick<ApiKeyProviderContext, "apiKey" | "fetcher" | "signal">;
 type Jin10ActionHandler = (input: Record<string, unknown>, context: Jin10ActionContext) => Promise<unknown>;
@@ -171,31 +170,17 @@ async function withJin10McpClient<T>(
   headers.set("content-type", "application/json");
   headers.set("user-agent", providerUserAgent);
 
-  const transport = new StreamableHTTPClientTransport(new URL(jin10McpEndpoint), {
-    fetch: input.fetcher,
-    requestInit: {
+  return withMcpClient(
+    {
+      endpoint: new URL(jin10McpEndpoint),
+      transport: "streamable_http",
+      fetcher: input.fetcher,
       headers,
       signal: input.signal,
+      mapError: mapJin10McpError,
     },
-  });
-  const client = new Client(
-    {
-      name: "oomol-connect-jin10",
-      version: "1.0.0",
-    },
-    { jsonSchemaValidator: jin10McpJsonSchemaValidator },
+    run,
   );
-
-  try {
-    await client.connect(transport, {
-      timeout: jin10RequestTimeoutMs,
-    });
-    return await run(client);
-  } catch (error) {
-    throw mapJin10McpError(error);
-  } finally {
-    await client.close().catch(() => undefined);
-  }
 }
 
 function normalizeJin10McpToolResult(toolName: string, result: Jin10McpToolResult): unknown {

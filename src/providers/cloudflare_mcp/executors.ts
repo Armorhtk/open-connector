@@ -1,19 +1,18 @@
 import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
 import type { BearerProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { McpError } from "@modelcontextprotocol/sdk/types.js";
-import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
 import { createHash } from "node:crypto";
+import { withMcpClient } from "../mcp-client.ts";
 import { defineBearerProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
 
 const service = "cloudflare_mcp";
 const cloudflareMcpEndpoint = "https://mcp.cloudflare.com/mcp";
 const cloudflareMcpRequestTimeoutMs = 60_000;
 const expectedTools = ["docs", "execute", "search"];
-const cloudflareMcpJsonSchemaValidator = new CfWorkerJsonSchemaValidator();
 
 type CloudflareMcpToolResult = Awaited<ReturnType<Client["callTool"]>>;
 
@@ -100,26 +99,17 @@ async function withCloudflareMcpClient<T>(
   const headers = new Headers();
   headers.set("authorization", `Bearer ${input.accessToken}`);
   headers.set("user-agent", providerUserAgent);
-  const transport = new StreamableHTTPClientTransport(new URL(cloudflareMcpEndpoint), {
-    fetch: input.fetcher,
-    requestInit: { headers },
-  });
-  const client = new Client(
-    { name: "oomol-connect-cloudflare-mcp", version: "1.0.0" },
-    { jsonSchemaValidator: cloudflareMcpJsonSchemaValidator },
-  );
-
-  try {
-    await client.connect(transport, {
-      timeout: cloudflareMcpRequestTimeoutMs,
+  return withMcpClient(
+    {
+      endpoint: new URL(cloudflareMcpEndpoint),
+      transport: "streamable_http",
+      fetcher: input.fetcher,
+      headers,
       signal: input.signal,
-    });
-    return await run(client);
-  } catch (error) {
-    throw mapCloudflareMcpError(error);
-  } finally {
-    await client.close().catch(() => undefined);
-  }
+      mapError: mapCloudflareMcpError,
+    },
+    run,
+  );
 }
 
 function normalizeCloudflareMcpToolResult(toolName: string, result: CloudflareMcpToolResult): unknown {
