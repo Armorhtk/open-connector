@@ -6,7 +6,7 @@ import type {
   RuntimeTokenSummary,
 } from "./model";
 import type { PolicyEditorDraft, PolicyEvaluation, PolicyResource } from "./policy";
-import type { FormEvent, ReactNode } from "react";
+import type { ReactNode, SubmitEvent } from "react";
 
 import { useTranslate } from "@embra/i18n/react";
 import { useClipboard } from "foxact/use-clipboard";
@@ -71,7 +71,7 @@ interface CreateTokenDialogProps {
   providers: ProviderDefinition[];
   onNameChange(name: string): void;
   onDraftChange(draft: PolicyEditorDraft): void;
-  onSubmit(event: FormEvent): Promise<void>;
+  onSubmit(event: SubmitEvent<HTMLFormElement>): Promise<void>;
   onCopy(token: string): void;
   onClose(): void;
 }
@@ -129,7 +129,7 @@ export function AccessPage(props: AccessPageProps): ReactNode {
     }
   }, [props.policy, runtimeEditing]);
 
-  async function submitToken(event: FormEvent): Promise<void> {
+  async function submitToken(event: SubmitEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     setTokenStatus(t("access.creating"));
     setCreated(null);
@@ -179,7 +179,7 @@ export function AccessPage(props: AccessPageProps): ReactNode {
     void persistRuntimePolicy();
   }
 
-  async function saveTokenPolicy(event: FormEvent): Promise<void> {
+  async function saveTokenPolicy(event: SubmitEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     if (!editingToken) {
       return;
@@ -818,7 +818,7 @@ interface EditTokenPolicyDialogProps {
   providers: ProviderDefinition[];
   status: string | null;
   onDraftChange(draft: PolicyEditorDraft): void;
-  onSubmit(event: FormEvent): Promise<void>;
+  onSubmit(event: SubmitEvent<HTMLFormElement>): Promise<void>;
   onClose(): void;
 }
 

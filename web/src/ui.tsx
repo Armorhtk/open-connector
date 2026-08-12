@@ -9,7 +9,7 @@ import type {
   RuntimeTokenSummary,
 } from "./model";
 import type { ThemeMode } from "./theme";
-import type { FormEvent, ReactNode } from "react";
+import type { ReactNode, SubmitEvent } from "react";
 
 import { useI18n, useLang, useTranslate } from "@embra/i18n/react";
 import {
@@ -444,7 +444,7 @@ export function UnlockView(props: UnlockViewProps): ReactNode {
   const t = useTranslate();
   const [token, setToken] = useState("");
 
-  function submit(event: FormEvent): void {
+  function submit(event: SubmitEvent<HTMLFormElement>): void {
     event.preventDefault();
     props.onUnlock(token.trim());
   }

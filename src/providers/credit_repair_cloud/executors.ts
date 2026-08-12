@@ -5,7 +5,8 @@ import type {
   ProviderProxyExecutor,
 } from "../../core/types.ts";
 
-import { XMLBuilder, XMLParser } from "fast-xml-parser";
+import XMLBuilder from "fast-xml-builder";
+import { XMLParser } from "fast-xml-parser";
 import { optionalRecord, optionalString } from "../../core/cast.ts";
 import {
   createProviderTimeout,
