@@ -2,34 +2,60 @@ import type { CredentialValidators, ProviderExecutors } from "../../core/types.t
 
 import { optionalString, requiredString } from "../../core/cast.ts";
 import { defineProviderExecutors, requireOAuthCredential } from "../provider-runtime.ts";
-import {
-  baiduNetdiskActionHandlers,
-  fetchBaiduNetdiskAccount,
-  requireBaiduNetdiskAppDirectoryPath,
-} from "./runtime.ts";
+import { executeBaiduNetdiskMcpAction, verifyBaiduNetdiskMcpConnection } from "./runtime-mcp.ts";
+import { fetchBaiduNetdiskAccount, getBaiduNetdiskQuota } from "./runtime.ts";
+
+interface BaiduNetdiskContext {
+  accessToken: string;
+  fetcher: typeof fetch;
+  signal?: AbortSignal;
+}
+
+const handlers: Record<string, (input: Record<string, unknown>, context: BaiduNetdiskContext) => Promise<unknown>> = {
+  async get_current_account(_input, context) {
+    const account = await fetchBaiduNetdiskAccount(context.accessToken, context.fetcher);
+    return {
+      accountId: account.accountId,
+      accountLabel: account.accountLabel,
+      avatarUrl: account.avatarUrl,
+      membership: account.membership,
+    };
+  },
+  get_quota(_input, context) {
+    return getBaiduNetdiskQuota(context);
+  },
+};
+
+for (const actionName of [
+  "list_files",
+  "search_files",
+  "semantic_search_files",
+  "upload_file_from_url",
+  "create_text_file",
+  "create_folder",
+  "copy",
+  "move",
+  "rename",
+]) {
+  handlers[actionName] = (input, context) => executeBaiduNetdiskMcpAction(actionName, input, context);
+}
 
 export const executors: ProviderExecutors = defineProviderExecutors({
   service: "baidu_netdisk",
-  handlers: baiduNetdiskActionHandlers,
+  handlers,
   async createContext(context, fetcher) {
     const credential = await requireOAuthCredential(context, "baidu_netdisk");
-    const oauthClientExtra = credential.metadata.oauthClientExtra;
-    return {
-      accessToken: credential.accessToken,
-      appDirectoryPath: requireBaiduNetdiskAppDirectoryPath(
-        typeof oauthClientExtra === "object" && oauthClientExtra !== null
-          ? (oauthClientExtra as Record<string, unknown>).appDirectoryPath
-          : undefined,
-      ),
-      fetcher,
-      signal: context.signal,
-    };
+    return { accessToken: credential.accessToken, fetcher, signal: context.signal };
   },
+  skipDnsValidation: true,
 });
 
 export const credentialValidators: CredentialValidators = {
   async oauth2(input, { fetcher }) {
-    const account = await fetchBaiduNetdiskAccount(input.accessToken, fetcher);
+    const [account] = await Promise.all([
+      fetchBaiduNetdiskAccount(input.accessToken, fetcher),
+      verifyBaiduNetdiskMcpConnection(input.accessToken, fetcher),
+    ]);
     return {
       profile: {
         accountId: requiredString(account.accountId, "baidu_netdisk account id"),
