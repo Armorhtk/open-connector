@@ -1,4 +1,4 @@
-import type { ActionDefinition, JsonSchema } from "../../core/types.ts";
+import type { ActionDefinition } from "../../core/types.ts";
 
 import { s } from "../../core/json-schema.ts";
 import { defineProviderAction } from "../../core/provider-definition.ts";
@@ -122,8 +122,8 @@ const createdObjectOutput = s.object("The object mymind created or matched.", {
   created: s.boolean("Whether a new object was created, or false when mymind matched an existing duplicate."),
 });
 
-const updateObjectInputSchema = {
-  ...s.object(
+const updateObjectInputSchema = s.requireAnyProperty(
+  s.object(
     "The input for updating an object.",
     {
       objectId: objectIdSchema,
@@ -133,11 +133,11 @@ const updateObjectInputSchema = {
     },
     { optional: ["title", "summary", "completed"] },
   ),
-  anyOf: [{ required: ["title"] }, { required: ["summary"] }, { required: ["completed"] }],
-} satisfies JsonSchema;
+  ["title", "summary", "completed"],
+);
 
-const updateSpaceInputSchema = {
-  ...s.object(
+const updateSpaceInputSchema = s.requireAnyProperty(
+  s.object(
     "The input for updating a space.",
     {
       spaceId: spaceIdSchema,
@@ -146,8 +146,8 @@ const updateSpaceInputSchema = {
     },
     { optional: ["name", "color"] },
   ),
-  anyOf: [{ required: ["name"] }, { required: ["color"] }],
-} satisfies JsonSchema;
+  ["name", "color"],
+);
 
 export const myMindActions: ActionDefinition[] = [
   defineProviderAction(service, {

@@ -58,6 +58,5 @@ export const provider: ProviderDefinition = {
     },
   ],
   homepageUrl: "https://gitlab.com",
-  iconUrl: "/provider-icons/gitlab.svg",
   actions: gitlabActions,
 };

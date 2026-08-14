@@ -28,6 +28,5 @@ export const provider: ProviderDefinition = {
     },
   ],
   homepageUrl: "https://webflow.com",
-  iconUrl: "/provider-icons/webflow.svg",
   actions: webflowActions,
 };

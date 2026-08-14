@@ -47,6 +47,5 @@ export const provider: ProviderDefinition = {
     },
   ],
   homepageUrl: "https://wordpress.org",
-  iconUrl: "/provider-icons/wordpress.svg",
   actions: wordpressActions,
 };

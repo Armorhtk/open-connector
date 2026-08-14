@@ -30,6 +30,5 @@ export const provider: ProviderDefinition = {
     },
   ],
   homepageUrl: "https://attio.com",
-  iconUrl: "/provider-icons/attio.svg",
   actions: attioActions,
 };
