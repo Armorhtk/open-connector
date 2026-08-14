@@ -82,22 +82,6 @@ const groupProfile = s.looseRequiredObject(
   { optional: ["description"] },
 );
 
-export type OktaActionName =
-  | "list_users"
-  | "get_user"
-  | "create_user"
-  | "update_user"
-  | "delete_user"
-  | "lifecycle_user"
-  | "list_groups"
-  | "get_group"
-  | "create_group"
-  | "update_group"
-  | "delete_group"
-  | "list_group_users"
-  | "add_user_to_group"
-  | "remove_user_from_group";
-
 export const oktaActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "list_users",

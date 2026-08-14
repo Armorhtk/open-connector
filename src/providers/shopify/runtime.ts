@@ -1,6 +1,5 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
 import type { ProviderRuntimeHandler } from "../provider-runtime.ts";
-import type { ShopifyActionName } from "./actions.ts";
 
 import { compactObject, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
 import { assertPublicHttpUrl } from "../../core/request.ts";
@@ -13,8 +12,6 @@ const shopPath = "/shop.json";
 const contentValidationPath = "/blogs/count.json";
 
 type ShopifyRequestPhase = "validate" | "execute";
-type ShopifyActionHandler = ProviderRuntimeHandler<ShopifyActionContext>;
-
 interface ShopifyPagination {
   nextPageInfo: string | null;
   previousPageInfo: string | null;
@@ -32,7 +29,7 @@ export interface ShopifyActionContext {
   signal?: AbortSignal;
 }
 
-export const shopifyActionHandlers: Record<ShopifyActionName, ShopifyActionHandler> = {
+export const shopifyActionHandlers: Record<string, ProviderRuntimeHandler<ShopifyActionContext>> = {
   async get_shop(_input, context) {
     return {
       shop: await getShopifyResource(context, shopPath, "shop"),

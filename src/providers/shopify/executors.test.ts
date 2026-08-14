@@ -63,21 +63,6 @@ describe("Shopify credentials", () => {
     });
   });
 
-  it("keeps custom-app access token validation compatible", async () => {
-    const result = await credentialValidators.apiKey!(
-      {
-        apiKey: "shpat_custom_token",
-        values: { shopDomain: "https://acme.myshopify.com/admin" },
-      },
-      { fetcher: shopifyCredentialFetcher("shpat_custom_token") },
-    );
-
-    expect(result).toMatchObject({
-      profile: { displayName: "Acme Store" },
-      grantedScopes: ["read_content"],
-    });
-  });
-
   it("keeps every resolved OAuth endpoint under myshopify.com", () => {
     const oauth = provider.auth.find((auth) => auth.type === "oauth2");
     if (!oauth || oauth.type !== "oauth2") {

@@ -5,7 +5,7 @@ import type {
   ProviderExecutors,
   ProviderProxyExecutor,
 } from "../../core/types.ts";
-import type { MailchimpActionName } from "./actions.ts";
+import type { ProviderRuntimeHandler } from "../provider-runtime.ts";
 
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
@@ -31,8 +31,6 @@ import {
 
 type MailchimpJsonObject = Record<string, unknown>;
 type MailchimpRequestMode = "validate" | "execute";
-type MailchimpActionHandler = (input: Record<string, unknown>, context: MailchimpActionContext) => Promise<unknown>;
-
 interface MailchimpActionContext {
   apiBaseUrl: string;
   authorization: string;
@@ -53,7 +51,7 @@ const service = "mailchimp";
 const mailchimpValidationPath = "/";
 const mailchimpOAuthMetadataUrl = "https://login.mailchimp.com/oauth2/metadata";
 
-export const mailchimpActionHandlers: Record<MailchimpActionName, MailchimpActionHandler> = {
+export const mailchimpActionHandlers: Record<string, ProviderRuntimeHandler<MailchimpActionContext>> = {
   list_lists(input, context) {
     return requestMailchimpJson({
       context,

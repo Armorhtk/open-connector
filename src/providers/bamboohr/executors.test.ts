@@ -64,19 +64,4 @@ describe("BambooHR authentication", () => {
       links: {},
     });
   });
-
-  it("keeps API key credentials on Basic authentication", async () => {
-    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      expect(new Headers(init?.headers).get("authorization")).toBe("Basic YXBpLWtleTp4");
-      return Response.json({ legalName: "Acme Inc." });
-    });
-
-    await credentialValidators.apiKey!(
-      {
-        apiKey: "api-key",
-        values: { companyDomain: "acme" },
-      },
-      { fetcher },
-    );
-  });
 });

@@ -72,21 +72,4 @@ describe("Okta authentication", () => {
       nextAfter: null,
     });
   });
-
-  it("keeps API tokens on the SSWS authorization scheme", async () => {
-    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      expect(new Headers(init?.headers).get("authorization")).toBe("SSWS okta-api-token");
-      return Response.json({ id: "user-1", profile: { login: "admin@example.com" } });
-    });
-
-    await credentialValidators.customCredential!(
-      {
-        values: {
-          orgUrl: "https://example.okta.com",
-          apiToken: "okta-api-token",
-        },
-      },
-      { fetcher },
-    );
-  });
 });

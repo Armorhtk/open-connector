@@ -4,7 +4,7 @@ import { s } from "../../core/json-schema.ts";
 import { defineProviderAction } from "../../core/provider-definition.ts";
 import { shopifyReadContentScope } from "./scopes.ts";
 
-const service = "shopify" as const;
+const service = "shopify";
 
 const shopifyIdSchema = (description: string) => s.integer(description, { minimum: 1 });
 const nullableStringSchema = (description: string) => s.nullable(s.string(description));
@@ -98,21 +98,6 @@ const dateFilterInput = {
   published_at_min: dateTimeFilterSchema,
   published_at_max: dateTimeFilterSchema,
 };
-
-export type ShopifyActionName =
-  | "get_shop"
-  | "list_blogs"
-  | "get_blog"
-  | "count_blogs"
-  | "list_pages"
-  | "get_page"
-  | "count_pages"
-  | "list_articles"
-  | "get_article"
-  | "count_articles"
-  | "list_article_tags"
-  | "list_blog_article_tags"
-  | "list_article_authors";
 
 export const shopifyActions: ActionDefinition[] = [
   defineProviderAction(service, {

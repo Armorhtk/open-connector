@@ -6,7 +6,7 @@ import type {
   ProviderProxyExecutor,
   ResolvedCredential,
 } from "../../core/types.ts";
-import type { DropboxSignActionName } from "./actions.ts";
+import type { ProviderRuntimeHandler } from "../provider-runtime.ts";
 
 import { Buffer } from "node:buffer";
 import { compactObject, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
@@ -28,9 +28,7 @@ interface DropboxSignContext {
   signal?: AbortSignal;
 }
 
-type DropboxSignActionHandler = (input: Record<string, unknown>, context: DropboxSignContext) => Promise<unknown>;
-
-export const dropboxSignActionHandlers: Record<DropboxSignActionName, DropboxSignActionHandler> = {
+export const dropboxSignActionHandlers: Record<string, ProviderRuntimeHandler<DropboxSignContext>> = {
   get_account(input, context) {
     return executeGetAccount(input, context);
   },

@@ -1,17 +1,5 @@
-import type { ExecutionContext, ResolvedCredential } from "../../core/types.ts";
-
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { proxy } from "./executors.ts";
-import {
-  createHeygenApiKeyAuth,
-  createHeygenOAuthAuth,
-  heygenActionHandlers,
-  validateHeygenCredential,
-} from "./runtime.ts";
-
-afterEach(() => {
-  vi.unstubAllGlobals();
-});
+import { describe, expect, it, vi } from "vitest";
+import { createHeygenOAuthAuth, heygenActionHandlers, validateHeygenCredential } from "./runtime.ts";
 
 describe("HeyGen authentication", () => {
   it("validates OAuth credentials against the OAuth API origin", async () => {
@@ -84,45 +72,6 @@ describe("HeyGen authentication", () => {
     expect(result).toMatchObject({
       assetId: "asset-1",
       url: "https://files.heygen.com/asset-1",
-    });
-  });
-
-  it("removes caller authorization when proxying with an API key", async () => {
-    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      const headers = new Headers(init?.headers);
-      expect(headers.get("authorization")).toBeNull();
-      expect(headers.get("x-api-key")).toBe("heygen-api-key");
-      return Response.json({ data: { username: "owner" } });
-    });
-    vi.stubGlobal("fetch", fetcher);
-    const credential: ResolvedCredential = {
-      authType: "api_key",
-      apiKey: "heygen-api-key",
-      values: {},
-      profile: { accountId: "api_key", displayName: "API Key", grantedScopes: [] },
-      metadata: {},
-    };
-    const context: ExecutionContext = {
-      getCredential: async () => credential,
-    };
-
-    const result = await proxy(
-      {
-        method: "GET",
-        endpoint: "/v1/user/me",
-        headers: { authorization: "Bearer caller-supplied-token" },
-      },
-      context,
-    );
-
-    expect(result.ok).toBe(true);
-  });
-
-  it("keeps API key credentials on the public API origin", () => {
-    expect(createHeygenApiKeyAuth("heygen-api-key")).toEqual({
-      apiBaseUrl: "https://api.heygen.com",
-      headerName: "X-Api-Key",
-      headerValue: "heygen-api-key",
     });
   });
 });

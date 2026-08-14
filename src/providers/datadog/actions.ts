@@ -67,15 +67,6 @@ const metricMetadata = looseRequiredObject(
   "Datadog metric metadata.",
 );
 
-export type DatadogActionName =
-  | "validate_api_key"
-  | "list_monitors"
-  | "get_monitor"
-  | "search_monitors"
-  | "query_timeseries_points"
-  | "list_metrics"
-  | "get_metric_metadata";
-
 export const datadogActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "validate_api_key",

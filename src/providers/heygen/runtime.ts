@@ -1,4 +1,4 @@
-import type { HeygenActionName } from "./actions.ts";
+import type { ProviderRuntimeHandler } from "../provider-runtime.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import { ProviderRequestError } from "../provider-runtime.ts";
@@ -18,7 +18,6 @@ export interface HeygenActionContext {
   signal?: AbortSignal;
 }
 
-type HeygenActionHandler = (input: Record<string, unknown>, context: HeygenActionContext) => Promise<unknown>;
 type HeygenRequestMode = "validate" | "execute";
 
 interface HeygenRequestInput {
@@ -33,7 +32,7 @@ interface HeygenRequestInput {
   signal?: AbortSignal;
 }
 
-export const heygenActionHandlers: Record<HeygenActionName, HeygenActionHandler> = {
+export const heygenActionHandlers: Record<string, ProviderRuntimeHandler<HeygenActionContext>> = {
   get_current_user(_input, context) {
     return heygenGetCurrentUser(context);
   },

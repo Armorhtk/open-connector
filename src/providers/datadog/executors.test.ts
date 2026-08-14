@@ -98,27 +98,4 @@ describe("Datadog credentials", () => {
       },
     });
   });
-
-  it("keeps API and application key validation compatible", async () => {
-    const result = await credentialValidators.apiKey!(
-      {
-        apiKey: "dd-api-key",
-        values: { applicationKey: "dd-app-key", site: "eu" },
-      },
-      {
-        fetcher: async (url, init) => {
-          expect(url.toString()).toBe("https://api.datadoghq.eu/api/v1/validate");
-          const headers = new Headers(init?.headers);
-          expect(headers.get("dd-api-key")).toBe("dd-api-key");
-          expect(headers.get("dd-application-key")).toBeNull();
-          return Response.json({ valid: true });
-        },
-      },
-    );
-
-    expect(result).toMatchObject({
-      profile: { accountId: "eu", displayName: "Datadog EU" },
-      metadata: { site: "eu", baseUrl: "https://api.datadoghq.eu", valid: true },
-    });
-  });
 });

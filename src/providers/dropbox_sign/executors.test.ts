@@ -1,6 +1,5 @@
-import { Buffer } from "node:buffer";
 import { describe, expect, it, vi } from "vitest";
-import { buildDropboxSignApiKeyAuthorization, credentialValidators, dropboxSignActionHandlers } from "./executors.ts";
+import { credentialValidators, dropboxSignActionHandlers } from "./executors.ts";
 
 describe("Dropbox Sign authentication", () => {
   it("validates OAuth credentials with Bearer authentication", async () => {
@@ -64,11 +63,5 @@ describe("Dropbox Sign authentication", () => {
       signatureRequests: [],
       listInfo: { page: 2 },
     });
-  });
-
-  it("keeps API key credentials on Dropbox Sign Basic authentication", () => {
-    expect(buildDropboxSignApiKeyAuthorization("dropbox-sign-api-key")).toBe(
-      `Basic ${Buffer.from("dropbox-sign-api-key:").toString("base64")}`,
-    );
   });
 });

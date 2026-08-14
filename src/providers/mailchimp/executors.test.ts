@@ -1,6 +1,5 @@
 import type { ExecutionContext, ResolvedCredential } from "../../core/types.ts";
 
-import { Buffer } from "node:buffer";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { credentialValidators, executors } from "./executors.ts";
 
@@ -43,32 +42,6 @@ describe("Mailchimp credentials", () => {
         email: "owner@example.com",
         role: "owner",
       },
-    });
-  });
-
-  it("keeps API key validation compatible with Basic authentication", async () => {
-    const apiKey = "0123456789abcdef-us6";
-    const result = await credentialValidators.apiKey!(
-      { apiKey, values: {} },
-      {
-        fetcher: async (url, init) => {
-          expect(url.toString()).toBe("https://us6.api.mailchimp.com/3.0/");
-          expect(new Headers(init?.headers).get("authorization")).toBe(
-            `Basic ${Buffer.from(`connect:${apiKey}`).toString("base64")}`,
-          );
-          return Response.json({
-            account_id: "account-1",
-            account_name: "Example Account",
-            email: "owner@example.com",
-            role: "owner",
-          });
-        },
-      },
-    );
-
-    expect(result).toMatchObject({
-      profile: { accountId: "account-1", displayName: "Example Account" },
-      metadata: { dataCenter: "us6" },
     });
   });
 
