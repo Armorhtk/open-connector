@@ -69,6 +69,33 @@ describe("Cloudflare Browser Run OAuth", () => {
     });
   });
 
+  it("collects every memberships page before storing the OAuth account allowlist", async () => {
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const page = new URL(input.toString()).searchParams.get("page");
+      const accountId = page === "1" ? "account-1" : "account-2";
+      return Response.json({
+        success: true,
+        result: [
+          {
+            id: `membership-${page}`,
+            account: { id: accountId, name: `Account ${page}`, type: "standard" },
+            status: "accepted",
+          },
+        ],
+        result_info: { page: Number(page), per_page: 50, count: 1, total_count: 2, total_pages: 2 },
+      });
+    });
+
+    const result = await credentialValidators.oauth2!(oauthCredential({}), { fetcher: fetch });
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    if (!result) throw new Error("Expected OAuth credential validation result");
+    expect(result.metadata?.availableAccounts).toEqual([
+      { id: "account-1", name: "Account 1", type: "standard" },
+      { id: "account-2", name: "Account 2", type: "standard" },
+    ]);
+  });
+
   it("lists OAuth accounts through Cloudflare memberships", async () => {
     const fetch = vi.fn(async () =>
       Response.json({

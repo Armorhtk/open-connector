@@ -146,19 +146,13 @@ export const credentialValidators: CredentialValidators = {
     };
   },
   async oauth2(input, { fetcher, signal }) {
-    const result = await requestOAuthAccounts(
-      input.accessToken,
-      { fetcher, signal },
-      { page: 1, perPage: 50 },
-      "validate",
-    );
-    if (result.accounts.length === 0) {
+    const accounts = await requestAllOAuthAccounts(input.accessToken, { fetcher, signal });
+    if (accounts.length === 0) {
       throw new ProviderRequestError(400, "Cloudflare OAuth cannot access any accounts.");
     }
 
-    const totalCount = optionalInteger(result.resultInfo.totalCount);
-    if (result.accounts.length === 1 && totalCount === 1) {
-      const account = result.accounts[0]!;
+    if (accounts.length === 1) {
+      const account = accounts[0]!;
       const accountId = readRequiredString(account, "id");
       const accountName = readRequiredString(account, "name");
       return {
@@ -186,7 +180,7 @@ export const credentialValidators: CredentialValidators = {
       metadata: {
         apiBaseUrl: cloudflareBrowserRenderingApiBaseUrl,
         validationEndpoint: "/memberships?page=1&per_page=50&status=accepted",
-        availableAccounts: result.accounts,
+        availableAccounts: accounts,
       },
     };
   },
@@ -229,6 +223,24 @@ async function requestOAuthAccounts(
     accounts: normalizeMembershipAccountList(envelope.result),
     resultInfo: normalizeResultInfo(envelope.result_info),
   };
+}
+
+async function requestAllOAuthAccounts(
+  accessToken: string,
+  context: Pick<CloudflareBrowserRenderingContext, "fetcher" | "signal">,
+): Promise<Array<Record<string, unknown>>> {
+  const firstPage = await requestOAuthAccounts(accessToken, context, { page: 1, perPage: 50 }, "validate");
+  const totalPages = optionalInteger(firstPage.resultInfo.totalPages);
+  if (totalPages === undefined || totalPages < 1) {
+    throw new ProviderRequestError(502, "malformed cloudflare memberships pagination");
+  }
+
+  const accounts = [...firstPage.accounts];
+  for (let page = 2; page <= totalPages; page += 1) {
+    const result = await requestOAuthAccounts(accessToken, context, { page, perPage: 50 }, "validate");
+    accounts.push(...result.accounts);
+  }
+  return accounts;
 }
 
 async function requestAccounts(
