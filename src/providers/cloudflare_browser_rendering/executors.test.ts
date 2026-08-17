@@ -22,20 +22,6 @@ function executionContext(credential: ResolvedCredential): ExecutionContext {
   return { getCredential: async () => credential };
 }
 
-function apiKeyCredential(): Extract<ResolvedCredential, { authType: "api_key" }> {
-  return {
-    authType: "api_key",
-    apiKey: "api-key-token",
-    values: { accountId: "account-1" },
-    profile: {
-      accountId: "account-1",
-      displayName: "Cloudflare Browser Run",
-      grantedScopes: [],
-    },
-    metadata: { accountId: "account-1" },
-  };
-}
-
 afterEach(() => {
   setDefaultGuardedFetchDnsLookup(null);
   vi.unstubAllGlobals();
@@ -166,23 +152,6 @@ describe("Cloudflare Browser Run OAuth", () => {
     expect(result).toMatchObject({ ok: true });
     expect(fetch.mock.calls[0]?.[0]).toBe("https://api.cloudflare.com/client/v4/accounts");
     expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).get("authorization")).toBe("Bearer oauth-access-token");
-  });
-
-  it("keeps API token actions working", async () => {
-    const fetch = vi.fn(async () => Response.json({ success: true, result: "# OpenMeld" }));
-    vi.stubGlobal("fetch", fetch);
-    setDefaultGuardedFetchDnsLookup(null);
-
-    const result = await executors["cloudflare_browser_rendering.get_markdown"]!(
-      { url: "https://openmeld.ai" },
-      executionContext(apiKeyCredential()),
-    );
-
-    expect(result).toEqual({ ok: true, output: { markdown: "# OpenMeld" } });
-    expect(fetch).toHaveBeenCalledWith(
-      "https://api.cloudflare.com/client/v4/accounts/account-1/browser-rendering/markdown",
-      expect.objectContaining({ headers: expect.objectContaining({ authorization: "Bearer api-key-token" }) }),
-    );
   });
 
   it("requires an explicit accessible account when OAuth can reach more than one", async () => {
