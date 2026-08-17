@@ -11,6 +11,8 @@ const sensitiveKeyPattern =
 const sensitiveContextPattern = /(^|\.)(cookies?|credentials?|headers?|secrets?)(\.|$)/i;
 const credentialValuePattern = /^(?:Basic|Bearer)\s+\S+|^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/i;
 const sensitiveUrlContextPattern = /callback|download|presigned|signed|temporary|webhook/i;
+const urlWithAuthorityPattern = /^(?:[a-z][a-z0-9+.-]*:)?\/\//i;
+const protocolRelativeBaseUrl = "relative://run-log.invalid";
 const safeErrorMessages: Record<string, string> = {
   action_blocked: "The action was blocked by runtime policy.",
   authorization_failed: "The provider rejected authorization.",
@@ -101,39 +103,49 @@ function summarizeString(value: string, path: string[]): string {
   if (credentialValuePattern.test(value)) {
     return "[redacted]";
   }
-  if (/^https?:\/\//i.test(value)) {
-    try {
-      const url = new URL(value);
-      if (
-        sensitiveUrlContextPattern.test(path.join(".")) ||
-        [...url.searchParams.keys()].some((name) => sensitiveKeyPattern.test(name))
-      ) {
-        return "[redacted-url]";
-      }
-      return url.origin;
-    } catch {
-      // Not a parseable URL. Keep the rest of the audit record intact instead
-      // of letting one malformed value collapse the whole summary, but still
-      // redact when the value sits in a sensitive URL context or carries
-      // credential material.
-      if (sensitiveUrlContextPattern.test(path.join(".")) || hasUrlPassword(value) || hasSensitiveQueryKey(value)) {
-        return "[redacted-url]";
-      }
+  if (urlWithAuthorityPattern.test(value)) {
+    const urlSummary = summarizeUrl(value, path);
+    if (urlSummary != null) {
+      return urlSummary;
     }
   }
   return value.length > maxStringLength ? `${value.slice(0, maxStringLength)}[truncated]` : value;
 }
 
-function hasUrlPassword(value: string): boolean {
+function summarizeUrl(value: string, path: string[]): string | undefined {
+  const protocolRelative = value.startsWith("//");
+  try {
+    const url = new URL(value, protocolRelative ? protocolRelativeBaseUrl : undefined);
+    if (
+      sensitiveUrlContextPattern.test(path.join(".")) ||
+      [...url.searchParams.keys()].some((name) => sensitiveKeyPattern.test(name))
+    ) {
+      return "[redacted-url]";
+    }
+    if (protocolRelative) {
+      return `//${url.host}`;
+    }
+    // Non-special schemes such as s3 have a null origin.
+    return url.origin === "null" ? `${url.protocol}//${url.host}` : url.origin;
+  } catch {
+    // Preserve malformed values when their retained prefix has no known secret.
+    if (sensitiveUrlContextPattern.test(path.join(".")) || hasUrlUserinfo(value) || hasSensitiveQueryKey(value)) {
+      return "[redacted-url]";
+    }
+    return undefined;
+  }
+}
+
+function hasUrlUserinfo(value: string): boolean {
+  // Detects userinfo (user@ or user:pass@) inside the authority of a URL-like
+  // string, even when the value as a whole cannot be parsed as a URL.
   const authorityStart = value.indexOf("://") + 3;
-  let hasPasswordSeparator = false;
   for (let index = authorityStart; index < value.length; index += 1) {
     const character = value[index];
-    if (character === ":") {
-      hasPasswordSeparator = true;
-    } else if (character === "@") {
-      return hasPasswordSeparator;
-    } else if (character === "/" || character === "?" || character === "#") {
+    if (character === "@") {
+      return true;
+    }
+    if (character === "/" || character === "?" || character === "#") {
       return false;
     }
   }
