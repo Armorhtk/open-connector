@@ -9,7 +9,7 @@ const context = {
 };
 
 describe("Twilio call actions", () => {
-  it("lists calls with the documented query parameter names", async () => {
+  it("lists calls with Twilio start-time range query parameters", async () => {
     let requestUrl = "";
     const fetcher: ProviderFetch = async (url) => {
       requestUrl = String(url);
@@ -42,6 +42,7 @@ describe("Twilio call actions", () => {
           to: "+14155551212",
           status: "completed",
           startTime: "2026-01-01",
+          endTime: "2026-01-31",
           pageSize: 1,
           pageToken: "previous",
         },
@@ -66,7 +67,10 @@ describe("Twilio call actions", () => {
     expect(url.pathname).toBe("/2010-04-01/Accounts/ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Calls.json");
     expect(url.searchParams.get("To")).toBe("+14155551212");
     expect(url.searchParams.get("Status")).toBe("completed");
-    expect(url.searchParams.get("StartTime")).toBe("2026-01-01");
+    expect(url.searchParams.get("StartTime>")).toBe("2026-01-01");
+    expect(url.searchParams.get("StartTime<")).toBe("2026-01-31");
+    expect(url.searchParams.has("StartTime")).toBe(false);
+    expect(url.searchParams.has("EndTime")).toBe(false);
     expect(url.searchParams.get("PageSize")).toBe("1");
     expect(url.searchParams.get("PageToken")).toBe("previous");
   });
