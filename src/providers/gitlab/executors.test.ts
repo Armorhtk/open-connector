@@ -85,6 +85,35 @@ describe("GitLab actions", () => {
     expect(result).toEqual({ id: 1, name: "demo" });
   });
 
+  it.each([
+    { archived: true, endpoint: "archive" },
+    { archived: false, endpoint: "unarchive" },
+  ])("routes archived=$archived through the dedicated project endpoint", async ({ archived, endpoint }) => {
+    const result = await gitlabActionHandlers.update_project(
+      { projectId: "1", archived },
+      actionContext(async (url, init) => {
+        expect(url.toString()).toBe(`https://gitlab.com/api/v4/projects/1/${endpoint}`);
+        expect(init?.method).toBe("POST");
+        expect(init?.body).toBeUndefined();
+        return Response.json({ id: 1, archived });
+      }),
+    );
+
+    expect(result).toEqual({ id: 1, archived });
+  });
+
+  it("rejects archived when combined with regular project updates", async () => {
+    const noRequest = actionContext(async () => {
+      throw new Error("no request expected");
+    });
+
+    await expect(
+      Promise.resolve().then(() =>
+        gitlabActionHandlers.update_project({ projectId: "1", archived: true, name: "renamed" }, noRequest),
+      ),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
   it("updates a project issue and maps API field names", async () => {
     const result = await gitlabActionHandlers.update_project_issue(
       {
@@ -137,6 +166,22 @@ describe("GitLab actions", () => {
       total: 12,
       nextPage: 3,
     });
+  });
+
+  it.each([
+    { projectId: "%2e" },
+    { projectId: "%2e%2e" },
+    { projectId: "%2E%2E" },
+    { projectId: ".%2e" },
+    { projectId: "%2e." },
+  ])("rejects encoded dot project ID $projectId before making a request", async ({ projectId }) => {
+    const noRequest = actionContext(async () => {
+      throw new Error("no request expected");
+    });
+
+    await expect(
+      Promise.resolve().then(() => gitlabActionHandlers.list_project_merge_requests({ projectId }, noRequest)),
+    ).rejects.toMatchObject({ status: 400 });
   });
 
   it("merges a merge request", async () => {

@@ -346,16 +346,23 @@ function createGitlabProject(input: GitlabActionInput, context: GitlabActionCont
 }
 
 function updateGitlabProject(input: GitlabActionInput, context: GitlabActionContext): Promise<unknown> {
+  const archived = optionalBoolean(input.archived);
   const body = compactObject({
     name: asOptionalString(input.name),
     path: asOptionalString(input.path),
     description: asClearableString(input.description),
     visibility: asOptionalString(input.visibility),
     default_branch: asOptionalString(input.defaultBranch),
-    archived: optionalBoolean(input.archived),
     issues_access_level: asOptionalString(input.issuesAccessLevel),
     merge_requests_access_level: asOptionalString(input.mergeRequestsAccessLevel),
   });
+  if (archived !== undefined) {
+    if (Object.keys(body).length > 0) {
+      throw new ProviderRequestError(400, "archived cannot be combined with other project updates");
+    }
+    const operation = archived ? "archive" : "unarchive";
+    return gitlabRequestJson(`/projects/${readProjectId(input)}/${operation}`, context, "execute", { method: "POST" });
+  }
   ensureUpdateFields(body, "update_project");
   return gitlabRequestJson(`/projects/${readProjectId(input)}`, context, "execute", { method: "PUT", body });
 }
@@ -613,8 +620,7 @@ function readProjectId(input: GitlabActionInput): string {
     throw new ProviderRequestError(400, "projectId is required");
   }
   if (
-    projectId === "." ||
-    projectId === ".." ||
+    /^(?:\.|%2e){1,2}$/iu.test(projectId) ||
     projectId.includes("/") ||
     projectId.includes("\\") ||
     projectId.includes("?") ||
