@@ -304,7 +304,9 @@ export const baiduNetdiskActions: ProviderActionDefinition[] = [
     ),
     outputSchema: s.object("The created Baidu Netdisk share link.", {
       link: s.url("The full Baidu Netdisk share URL."),
-      shortUrl: s.url("The shortened Baidu Netdisk share URL."),
+      shortUrl: s.url(
+        "The shortened Baidu Netdisk share URL, or the full URL when Baidu omits or returns an invalid short URL.",
+      ),
       periodDays: s.integer("The share validity period in days.", { minimum: 1 }),
       accessCode: shareAccessCodeSchema,
     }),

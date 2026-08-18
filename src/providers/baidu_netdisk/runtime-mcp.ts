@@ -497,15 +497,22 @@ function normalizeShareLink(payload: Record<string, unknown>): Record<string, un
   if (!accessCode || accessCode.length !== 4) {
     throw new ProviderRequestError(502, "baidu_netdisk MCP share response has invalid pwd");
   }
+  const link = requireShareUrl(share.link, "link");
   return {
-    link: requireShareUrl(share.link, "link"),
-    shortUrl: requireShareUrl(share.short_url, "short_url"),
+    link,
+    shortUrl: optionalShareUrl(share.short_url) ?? link,
     periodDays,
     accessCode,
   };
 }
 
 function requireShareUrl(value: unknown, fieldName: string): string {
+  const url = optionalShareUrl(value);
+  if (url) return url;
+  throw new ProviderRequestError(502, `baidu_netdisk MCP share response is missing ${fieldName}`);
+}
+
+function optionalShareUrl(value: unknown): string | undefined {
   const url = optionalString(value);
   if (url) {
     try {
@@ -515,7 +522,7 @@ function requireShareUrl(value: unknown, fieldName: string): string {
       // Map malformed provider URLs to one stable upstream response error.
     }
   }
-  throw new ProviderRequestError(502, `baidu_netdisk MCP share response is missing ${fieldName}`);
+  return undefined;
 }
 
 function toMcpOnDuplicate(value: unknown) {
