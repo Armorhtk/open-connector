@@ -381,11 +381,22 @@ export function createOpenApiDocument(
             allowedProxies: policyRuleArraySchema(
               "Provider proxies explicitly granted to this token. An empty list grants no proxy access.",
             ),
+            allowedConnections: connectionIdArraySchema(
+              "Stable connection IDs granted to this stored runtime token. An empty list is unrestricted connection access. IDs are opaque values returned by the connection APIs. Virtual no_auth connections do not require grants.",
+            ),
             createdAt: jsonSchema.string({ description: "Creation timestamp." }),
             lastUsedAt: jsonSchema.string({ description: "Last successful use timestamp." }),
           },
           {
-            required: ["id", "name", "allowedActions", "blockedActions", "allowedProxies", "createdAt"],
+            required: [
+              "id",
+              "name",
+              "allowedActions",
+              "blockedActions",
+              "allowedProxies",
+              "allowedConnections",
+              "createdAt",
+            ],
             description: "Runtime API token summary. Plaintext tokens and token hashes are not returned.",
           },
         ),
@@ -396,6 +407,9 @@ export function createOpenApiDocument(
             blockedActions: policyRuleArraySchema("Optional action block rules for the new token."),
             allowedProxies: policyRuleArraySchema(
               "Optional provider proxy grants for the new token. Omit or leave empty to deny proxy access.",
+            ),
+            allowedConnections: connectionIdArraySchema(
+              "Optional stable connection IDs granted to the new token. Omit or leave empty for unrestricted connection access. A non-empty list matches exact opaque IDs returned by the connection APIs. Virtual no_auth connections do not require grants.",
             ),
           },
           {
@@ -410,10 +424,14 @@ export function createOpenApiDocument(
             allowedProxies: policyRuleArraySchema(
               "Provider proxies explicitly granted to this token. An empty list grants no proxy access.",
             ),
+            allowedConnections: connectionIdArraySchema(
+              "Stable connection IDs granted to this stored token. An empty list is unrestricted connection access. A non-empty list matches exact opaque IDs returned by the connection APIs. Virtual no_auth connections do not require grants.",
+            ),
           },
           {
-            required: ["allowedActions", "blockedActions", "allowedProxies"],
-            description: "Complete replacement of one stored runtime token's action and proxy permissions.",
+            required: ["allowedActions", "blockedActions", "allowedProxies", "allowedConnections"],
+            description:
+              "Complete replacement of one stored runtime token's action, proxy, and connection permissions.",
           },
         ),
         PolicyRules: policyRulesSchema(),
@@ -444,7 +462,13 @@ export function createOpenApiDocument(
             allowed: jsonSchema.boolean({ description: "Whether policy permits execution." }),
             code: {
               type: "string",
-              enum: ["action_not_allowed", "action_blocked", "proxy_not_allowed", "proxy_blocked"],
+              enum: [
+                "action_not_allowed",
+                "action_blocked",
+                "proxy_not_allowed",
+                "proxy_blocked",
+                "connection_not_allowed",
+              ],
             },
             message: jsonSchema.string({ description: "Policy denial message." }),
             checks: {
@@ -754,6 +778,19 @@ function policyRuleArraySchema(description: string): JsonSchema {
       maxLength: policyRuleMaxBytes,
       description: `Policy rule. The server enforces a ${policyRuleMaxBytes}-byte UTF-8 limit.`,
     },
+    description,
+  };
+}
+
+function connectionIdArraySchema(description: string): JsonSchema {
+  return {
+    type: "array",
+    maxItems: policyRuleListMaxItems,
+    items: jsonSchema.string({
+      minLength: 1,
+      maxLength: policyRuleMaxBytes,
+      description: "Opaque stable connection ID returned by a connection API.",
+    }),
     description,
   };
 }

@@ -1,5 +1,5 @@
 import type { CatalogStore, RuntimeActionDefinition } from "../catalog-store.ts";
-import type { ConnectionService } from "../connection-service.ts";
+import type { ConnectionService, ConnectionSummary } from "../connection-service.ts";
 import type { ActionPolicySnapshot } from "../core/action-policy.ts";
 import type { ActionSearchIndexProvider, ActionSearchResult } from "../core/action-search.ts";
 import type { OAuthClientConfigInput } from "../oauth/oauth-client-config-service.ts";
@@ -55,6 +55,7 @@ import {
 import { createTransitFileResponse, TransitFileError } from "./files/transit-file-store.ts";
 import { ProxyRunner } from "./proxy/proxy-runner.ts";
 import { decodeRunLogCursor } from "./storage/runtime-store.ts";
+import { summarizeRuntimeToken } from "./storage/runtime-token-service.ts";
 
 /**
  * Dependencies required to construct the local connector server.
@@ -653,17 +654,42 @@ export class ConnectServer {
   }
 
   private async listRuntimeApps(context: Context): Promise<Response> {
+    let policy: ActionPolicySnapshot;
+    try {
+      policy = await this.getPolicySnapshot(context);
+    } catch {
+      return writeRuntimeFailure(context, {
+        status: 500,
+        errorCode: "internal_error",
+        message: "Runtime policy is unavailable.",
+      });
+    }
     return writeRuntimeSuccess(
       context,
-      (await this.options.connections.listConnections()).map(serializeRuntimeConnectedApp),
+      this.filterAllowedConnections(policy, await this.options.connections.listConnections()).map(
+        serializeRuntimeConnectedApp,
+      ),
     );
   }
 
   private async listRuntimeAppsByService(context: Context, service: string): Promise<Response> {
+    let policy: ActionPolicySnapshot;
+    try {
+      policy = await this.getPolicySnapshot(context);
+    } catch {
+      return writeRuntimeFailure(context, {
+        status: 500,
+        errorCode: "internal_error",
+        message: "Runtime policy is unavailable.",
+        meta: { service },
+      });
+    }
     try {
       return writeRuntimeSuccess(
         context,
-        (await this.options.connections.listConnectionsByService(service)).map(serializeRuntimeConnectedApp),
+        this.filterAllowedConnections(policy, await this.options.connections.listConnectionsByService(service)).map(
+          serializeRuntimeConnectedApp,
+        ),
       );
     } catch (error) {
       if (error instanceof ConnectionError) {
@@ -681,7 +707,34 @@ export class ConnectServer {
 
   private async listAuthenticatedRuntimeApps(context: Context): Promise<Response> {
     const services = context.req.queries("service") ?? [];
-    return writeRuntimeSuccess(context, await this.options.connections.listAuthenticatedServices(services));
+    let policy: ActionPolicySnapshot;
+    try {
+      policy = await this.getPolicySnapshot(context);
+    } catch {
+      return writeRuntimeFailure(context, {
+        status: 500,
+        errorCode: "internal_error",
+        message: "Runtime policy is unavailable.",
+      });
+    }
+    const authenticated = new Set(
+      this.filterAllowedConnections(policy, await this.options.connections.listConnections())
+        .filter((connection) => connection.configured && connection.authType !== "no_auth")
+        .map((connection) => connection.service),
+    );
+    return writeRuntimeSuccess(
+      context,
+      services.filter((service) => authenticated.has(service)),
+    );
+  }
+
+  private filterAllowedConnections(
+    policy: ActionPolicySnapshot,
+    connections: ConnectionSummary[],
+  ): ConnectionSummary[] {
+    return connections.filter(
+      (connection) => connection.authType === "no_auth" || policy.evaluateConnection(connection.id).allowed,
+    );
   }
 
   private async handleMcp(context: Context): Promise<Response> {
@@ -869,14 +922,7 @@ export class ConnectServer {
     const created = await this.options.runtimeTokens.createToken(name, readTokenPolicy(body, true));
     return context.json({
       token: created.token,
-      record: {
-        id: created.record.id,
-        name: created.record.name,
-        allowedActions: created.record.allowedActions,
-        blockedActions: created.record.blockedActions,
-        allowedProxies: created.record.allowedProxies,
-        createdAt: created.record.createdAt,
-      },
+      record: summarizeRuntimeToken(created.record),
     });
   }
 

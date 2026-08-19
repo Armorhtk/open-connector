@@ -237,6 +237,34 @@ curl -s -X POST "http://localhost:3000/v1/actions/github.get_current_user?alias=
   -d '{"input":{}}'
 ```
 
+Persistent runtime tokens may further restrict this selection with `allowedConnections`. An omitted
+or empty list leaves every stored connection available. Entries are the stable, opaque IDs returned
+when connections are created or listed. The alias above selects the `work` connection, whose `id`
+must be granted; an unnamed request selects the default connection and requires its ID. Other
+connections return `403 connection_not_allowed` before the credential is loaded. Virtual `no_auth`
+connections do not require a grant.
+
+Example: keep a shared default GitHub connection and a `work` connection, then issue one
+unrestricted token and one work-only token:
+
+```bash
+curl -s -X PUT http://localhost:3000/api/connections/github \
+  -H 'content-type: application/json' \
+  -d '{"authType":"api_key","values":{"apiKey":"github_pat_default"}}'
+
+curl -s -X PUT http://localhost:3000/api/connections/github \
+  -H 'content-type: application/json' \
+  -d '{"authType":"api_key","connectionName":"work","values":{"apiKey":"github_pat_work"}}'
+
+curl -s -X POST http://localhost:3000/api/runtime-tokens \
+  -H 'content-type: application/json' \
+  -d '{"name":"shared-client","allowedActions":[],"blockedActions":[],"allowedProxies":[]}'
+
+curl -s -X POST http://localhost:3000/api/runtime-tokens \
+  -H 'content-type: application/json' \
+  -d '{"name":"work-client","allowedActions":[],"blockedActions":[],"allowedProxies":[],"allowedConnections":["<work-connection-id>"]}'
+```
+
 ## Reset And Key Rotation
 
 Reset local runtime data:
@@ -297,9 +325,15 @@ Authorization: Bearer replace-with-an-admin-token
 Create runtime tokens for `/v1` and `/mcp` callers from the web console Access tab or
 `POST /api/runtime-tokens`. The token is shown once when created; only a hash is stored in SQLite.
 Runtime clients should send `Authorization: Bearer oct_...`. Persistent tokens configure Action
-rules and provider proxy grants independently. Their `allowedProxies` list is empty by default,
-which denies `/v1/proxy/:service`; add a provider service or `*` only when that client needs proxy
-access.
+rules, provider proxy grants, and optional connection grants independently. Their `allowedProxies`
+list is empty by default, which denies `/v1/proxy/:service`; add a provider service or `*` only when
+that client needs proxy access. Omit `allowedConnections` or send `[]` on create for unrestricted
+connection access. Updates must send the field so a PUT cannot drop an existing restriction. A
+non-empty list is an exact allowlist of stable, opaque IDs returned by the connection APIs; unnamed
+requests select the provider's default connection and are denied unless its ID is listed. Virtual
+`no_auth` connections do not require a grant. HTTP, MCP, and proxy callers receive
+`connection_not_allowed` before lookup. Runtime discovery is filtered; `GET /api/connections` and
+Action `agent.md` guides are not.
 
 `OOMOL_CONNECT_RUNTIME_TOKEN` is still accepted for bootstrap scripts and backward compatibility.
 

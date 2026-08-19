@@ -89,10 +89,14 @@ describe("action execution OpenAPI", () => {
     const runLog = document.components.schemas.RunLog as { properties: Record<string, unknown> };
     const tokenSummary = document.components.schemas.RuntimeTokenSummary as {
       required: string[];
-      properties: Record<string, unknown>;
+      properties: Record<string, { description?: string }>;
     };
     const tokenPolicy = document.components.schemas.TokenPolicy as {
       required: string[];
+      properties: Record<string, unknown>;
+    };
+    const policyDecision = document.components.schemas.PolicyDecision as {
+      properties: { code: { enum: string[] } };
     };
 
     expect(runtimePolicyPath.get.responses["200"]).toBeDefined();
@@ -104,10 +108,67 @@ describe("action execution OpenAPI", () => {
       items: { maxLength: 256, description: expect.stringContaining("256-byte UTF-8 limit") },
     });
     expect(tokenSummary.required).toEqual(
-      expect.arrayContaining(["allowedActions", "blockedActions", "allowedProxies"]),
+      expect.arrayContaining(["allowedActions", "blockedActions", "allowedProxies", "allowedConnections"]),
     );
-    expect(tokenPolicy.required).toEqual(["allowedActions", "blockedActions", "allowedProxies"]);
+    expect(tokenPolicy.required).toEqual(["allowedActions", "blockedActions", "allowedProxies", "allowedConnections"]);
+    expect(policyDecision.properties.code.enum).toEqual([
+      "action_not_allowed",
+      "action_blocked",
+      "proxy_not_allowed",
+      "proxy_blocked",
+      "connection_not_allowed",
+    ]);
     expect(runLog.properties).toHaveProperty("policy");
     expect(runLog.properties).toHaveProperty("runtimeTokenId");
   });
+
+  it("documents stored-token connection IDs without changing deployment PolicyRules", () => {
+    const document = createOpenApiDocument([provider]);
+    const tokenSummary = document.components.schemas.RuntimeTokenSummary as {
+      required: string[];
+      properties: Record<string, ConnectionGrantSchema>;
+    };
+    const createRequest = document.components.schemas.RuntimeTokenCreateRequest as {
+      required: string[];
+      properties: Record<string, ConnectionGrantSchema>;
+    };
+    const tokenPolicy = document.components.schemas.TokenPolicy as {
+      required: string[];
+      properties: Record<string, ConnectionGrantSchema>;
+    };
+    const policyRules = document.components.schemas.PolicyRules as {
+      properties: Record<string, unknown>;
+    };
+    const expectedGrant = {
+      type: "array",
+      maxItems: 128,
+      items: {
+        type: "string",
+        minLength: 1,
+        maxLength: 256,
+      },
+    };
+
+    expect(policyRules.properties).not.toHaveProperty("allowedConnections");
+    expect(tokenSummary.required).toContain("allowedConnections");
+    expect(createRequest.required).not.toContain("allowedConnections");
+    expect(tokenPolicy.required).toContain("allowedConnections");
+    expect(tokenSummary.properties.allowedConnections).toMatchObject(expectedGrant);
+    expect(createRequest.properties.allowedConnections).toMatchObject(expectedGrant);
+    expect(tokenPolicy.properties.allowedConnections).toMatchObject(expectedGrant);
+    expect(tokenSummary.properties.allowedConnections.description).toMatch(/empty list/i);
+    expect(tokenSummary.properties.allowedConnections.description).toMatch(/unrestricted/i);
+    expect(createRequest.properties.allowedConnections.description).toMatch(/omit/i);
+    expect(createRequest.properties.allowedConnections.description).toMatch(/exact/i);
+    expect(createRequest.properties.allowedConnections.description).toMatch(/opaque IDs/i);
+    expect(tokenPolicy.properties.allowedConnections.description).toMatch(/connection APIs/i);
+    expect(tokenPolicy.properties.allowedConnections.description).not.toMatch(/omit/i);
+  });
 });
+
+interface ConnectionGrantSchema {
+  type: string;
+  maxItems: number;
+  description: string;
+  items: { type: string; minLength: number; maxLength: number; pattern: string };
+}
