@@ -18,6 +18,16 @@ const eventPayload = {
   end: { dateTime: "2026-08-19T09:30:00Z" },
   attendees: [{ email: "alice@example.com" }],
 };
+const existingEvent = {
+  id: "evt-1",
+  etag: '"etag-1"',
+  status: "confirmed",
+  summary: "Standup",
+  attendees: [
+    { email: "alice@example.com", displayName: "Alice", responseStatus: "accepted" },
+    { email: "bob@example.com", responseStatus: "tentative" },
+  ],
+};
 
 interface CapturedRequest {
   method: string;
@@ -392,6 +402,610 @@ describe("googlecalendar event write sendUpdates", () => {
   });
 });
 
+describe("googlecalendar attendee action definitions", () => {
+  it.each(["add_attendee", "remove_attendee"] as const)(
+    "registers %s with eventId and attendeeEmail required and calendarId defaulted to primary",
+    (name) => {
+      const action = googlecalendarActions.find((candidate) => candidate.name === name);
+
+      expect(action).toBeDefined();
+      expect(action?.inputSchema.required).toEqual(["eventId", "attendeeEmail"]);
+      expect(action?.inputSchema.properties).toMatchObject({
+        calendarId: { default: "primary" },
+        sendUpdates: { type: "string", enum: ["all", "externalOnly", "none"] },
+      });
+    },
+  );
+
+  // Only the new action may pick a notification default; remove_attendee is already
+  // published and must keep sending whatever Google defaults to when it is omitted.
+  it("defaults sendUpdates to all on add_attendee and leaves remove_attendee undefaulted", () => {
+    const add = googlecalendarActions.find((candidate) => candidate.name === "add_attendee");
+    const remove = googlecalendarActions.find((candidate) => candidate.name === "remove_attendee");
+
+    expect(add?.inputSchema.properties).toMatchObject({ sendUpdates: { default: "all" } });
+    expect(remove?.inputSchema.properties).toEqual(
+      expect.objectContaining({
+        sendUpdates: {
+          type: "string",
+          enum: ["all", "externalOnly", "none"],
+          description: expect.any(String),
+        },
+      }),
+    );
+  });
+});
+
+describe("googlecalendar.add_attendee", () => {
+  it("GETs the event then PATCHes a merged attendees array that keeps existing guests", async () => {
+    const { fetcher, requests } = stubCalendarResponses([
+      Response.json(existingEvent),
+      Response.json({
+        ...existingEvent,
+        attendees: [
+          ...existingEvent.attendees,
+          { email: "cara@example.com", displayName: "Cara", optional: true, responseStatus: "needsAction" },
+        ],
+      }),
+    ]);
+
+    const output = await addAttendee(
+      {
+        eventId: "evt-1",
+        calendarId: "cal-1",
+        attendeeEmail: "cara@example.com",
+        displayName: "Cara",
+        optional: true,
+      },
+      fetcher,
+    );
+
+    expect(requests).toHaveLength(2);
+    expect(requests[0]?.method).toBe("GET");
+    expect(requests[0]?.url.pathname).toBe("/calendar/v3/calendars/cal-1/events/evt-1");
+    expect(requests[0]?.url.searchParams.get("sendUpdates")).toBeNull();
+    expect(requests[1]?.method).toBe("PATCH");
+    expect(requests[1]?.url.pathname).toBe("/calendar/v3/calendars/cal-1/events/evt-1");
+    expect(requests[1]?.url.searchParams.get("sendUpdates")).toBe("all");
+    expect(requests[1]?.headers.get("if-match")).toBe('"etag-1"');
+    expect(requests[1]?.body).toEqual({
+      attendees: [
+        { email: "alice@example.com", displayName: "Alice", responseStatus: "accepted" },
+        { email: "bob@example.com", responseStatus: "tentative" },
+        { email: "cara@example.com", displayName: "Cara", optional: true },
+      ],
+    });
+    expect(output).toMatchObject({
+      id: "evt-1",
+      attendees: expect.arrayContaining([
+        expect.objectContaining({ email: "cara@example.com", displayName: "Cara", optional: true }),
+      ]),
+    });
+  });
+
+  it("returns the GET payload and skips PATCH when the email is already on the event", async () => {
+    const { fetcher, requests } = stubCalendarResponses([Response.json(existingEvent)]);
+
+    const output = await addAttendee(
+      {
+        eventId: "evt-1",
+        calendarId: "cal-1",
+        attendeeEmail: "Alice@Example.com",
+      },
+      fetcher,
+    );
+
+    expect(output).toEqual(existingEvent);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.method).toBe("GET");
+  });
+
+  it("sends sendUpdates=none on the PATCH URL when requested", async () => {
+    const { fetcher, requests } = stubCalendarResponses([Response.json(existingEvent), Response.json(existingEvent)]);
+
+    await addAttendee(
+      {
+        eventId: "evt-1",
+        calendarId: "cal-1",
+        attendeeEmail: "cara@example.com",
+        sendUpdates: "none",
+      },
+      fetcher,
+    );
+
+    expect(requests).toHaveLength(2);
+    expect(requests[1]?.method).toBe("PATCH");
+    expect(requests[1]?.url.searchParams.get("sendUpdates")).toBe("none");
+  });
+
+  it("uses the primary calendar when calendarId is omitted", async () => {
+    const { fetcher, requests } = stubCalendarResponses([Response.json(existingEvent), Response.json(existingEvent)]);
+
+    await addAttendee(
+      {
+        eventId: "evt-1",
+        attendeeEmail: "cara@example.com",
+      },
+      fetcher,
+    );
+
+    expect(requests).toHaveLength(2);
+    expect(requests[0]?.url.pathname).toBe("/calendar/v3/calendars/primary/events/evt-1");
+    expect(requests[1]?.url.pathname).toBe("/calendar/v3/calendars/primary/events/evt-1");
+  });
+
+  it("returns 400 when attendeeEmail is missing", async () => {
+    const { fetcher, requests } = stubCalendarResponses([]);
+
+    await expect(addAttendee({ eventId: "evt-1" }, fetcher)).rejects.toEqual(
+      new ProviderRequestError(400, "attendeeEmail is required"),
+    );
+    expect(requests).toHaveLength(0);
+  });
+
+  it("returns 400 before fetching when sendUpdates is invalid", async () => {
+    const { fetcher, requests } = stubCalendarResponses([]);
+
+    await expect(
+      addAttendee(
+        {
+          eventId: "evt-1",
+          attendeeEmail: "cara@example.com",
+          sendUpdates: "everyone",
+        },
+        fetcher,
+      ),
+    ).rejects.toEqual(new ProviderRequestError(400, "sendUpdates must be all, externalOnly, or none"));
+    expect(requests).toHaveLength(0);
+  });
+
+  it("returns 400 before fetching when sendUpdates is empty instead of treating it as omitted", async () => {
+    const { fetcher, requests } = stubCalendarResponses([]);
+
+    await expect(
+      addAttendee(
+        {
+          eventId: "evt-1",
+          attendeeEmail: "cara@example.com",
+          sendUpdates: "",
+        },
+        fetcher,
+      ),
+    ).rejects.toEqual(new ProviderRequestError(400, "sendUpdates must be all, externalOnly, or none"));
+    expect(requests).toHaveLength(0);
+  });
+
+  it("adds the first attendee when the event has no attendees array", async () => {
+    const eventWithoutGuests = { id: "evt-1", etag: '"etag-empty"', status: "confirmed", summary: "Standup" };
+    const { fetcher, requests } = stubCalendarResponses([
+      Response.json(eventWithoutGuests),
+      Response.json({
+        ...eventWithoutGuests,
+        attendees: [{ email: "cara@example.com" }],
+      }),
+    ]);
+
+    await addAttendee(
+      {
+        eventId: "evt-1",
+        calendarId: "cal-1",
+        attendeeEmail: "cara@example.com",
+      },
+      fetcher,
+    );
+
+    expect(requests[1]?.body).toEqual({
+      attendees: [{ email: "cara@example.com" }],
+    });
+    expect(requests[1]?.headers.get("if-match")).toBe('"etag-empty"');
+  });
+
+  it("refuses to PATCH when the GET payload has no ETag", async () => {
+    const { fetcher, requests } = stubCalendarResponses([
+      Response.json({
+        id: "evt-1",
+        status: "confirmed",
+        summary: "Standup",
+      }),
+    ]);
+
+    await expect(
+      addAttendee(
+        {
+          eventId: "evt-1",
+          calendarId: "cal-1",
+          attendeeEmail: "cara@example.com",
+        },
+        fetcher,
+      ),
+    ).rejects.toEqual(new ProviderRequestError(502, "googlecalendar returned an event without an etag"));
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.method).toBe("GET");
+  });
+
+  it("refuses to PATCH when Google omitted attendees from the GET payload", async () => {
+    const { fetcher, requests } = stubCalendarResponses([
+      Response.json({
+        ...existingEvent,
+        attendeesOmitted: true,
+      }),
+    ]);
+
+    await expect(
+      addAttendee(
+        {
+          eventId: "evt-1",
+          calendarId: "cal-1",
+          attendeeEmail: "cara@example.com",
+        },
+        fetcher,
+      ),
+    ).rejects.toEqual(new ProviderRequestError(502, "googlecalendar returned an event with some attendees omitted"));
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.method).toBe("GET");
+  });
+
+  it("re-fetches, merges, and retries PATCH after an If-Match 412", async () => {
+    const concurrentEvent = {
+      ...existingEvent,
+      etag: '"etag-2"',
+      attendees: [...existingEvent.attendees, { email: "dan@example.com", responseStatus: "needsAction" }],
+    };
+    const { fetcher, requests } = stubCalendarResponses([
+      Response.json(existingEvent),
+      new Response(JSON.stringify({ error: { message: "Precondition Failed" } }), { status: 412 }),
+      Response.json(concurrentEvent),
+      Response.json({
+        ...concurrentEvent,
+        attendees: [...concurrentEvent.attendees, { email: "cara@example.com" }],
+      }),
+    ]);
+
+    await addAttendee(
+      {
+        eventId: "evt-1",
+        calendarId: "cal-1",
+        attendeeEmail: "cara@example.com",
+      },
+      fetcher,
+    );
+
+    expect(requests.map((request) => request.method)).toEqual(["GET", "PATCH", "GET", "PATCH"]);
+    expect(requests[1]?.headers.get("if-match")).toBe('"etag-1"');
+    expect(requests[3]?.headers.get("if-match")).toBe('"etag-2"');
+    expect(requests[3]?.body).toEqual({
+      attendees: [
+        { email: "alice@example.com", displayName: "Alice", responseStatus: "accepted" },
+        { email: "bob@example.com", responseStatus: "tentative" },
+        { email: "dan@example.com", responseStatus: "needsAction" },
+        { email: "cara@example.com" },
+      ],
+    });
+  });
+
+  it("returns the re-fetched event without a second PATCH when the retry finds the guest already added", async () => {
+    const concurrentEvent = {
+      ...existingEvent,
+      etag: '"etag-2"',
+      attendees: [...existingEvent.attendees, { email: "Cara@Example.com", responseStatus: "needsAction" }],
+    };
+    const { fetcher, requests } = stubCalendarResponses([
+      Response.json(existingEvent),
+      new Response(JSON.stringify({ error: { message: "Precondition Failed" } }), { status: 412 }),
+      Response.json(concurrentEvent),
+    ]);
+
+    const output = await addAttendee(
+      {
+        eventId: "evt-1",
+        calendarId: "cal-1",
+        attendeeEmail: "cara@example.com",
+      },
+      fetcher,
+    );
+
+    expect(requests.map((request) => request.method)).toEqual(["GET", "PATCH", "GET"]);
+    expect(output).toEqual(concurrentEvent);
+  });
+
+  it("retries the PATCH at most once and surfaces a second If-Match 412", async () => {
+    const { fetcher, requests } = stubCalendarResponses([
+      Response.json(existingEvent),
+      new Response(JSON.stringify({ error: { message: "Precondition Failed" } }), { status: 412 }),
+      Response.json({ ...existingEvent, etag: '"etag-2"' }),
+      new Response(JSON.stringify({ error: { message: "Precondition Failed" } }), { status: 412 }),
+    ]);
+
+    await expect(
+      addAttendee(
+        {
+          eventId: "evt-1",
+          calendarId: "cal-1",
+          attendeeEmail: "cara@example.com",
+        },
+        fetcher,
+      ),
+    ).rejects.toMatchObject({ status: 412, message: "Precondition Failed" });
+    expect(requests.map((request) => request.method)).toEqual(["GET", "PATCH", "GET", "PATCH"]);
+  });
+
+  it("surfaces a non-412 PATCH error without retrying", async () => {
+    const { fetcher, requests } = stubCalendarResponses([
+      Response.json(existingEvent),
+      new Response(JSON.stringify({ error: { message: "Insufficient permission" } }), { status: 403 }),
+    ]);
+
+    await expect(
+      addAttendee(
+        {
+          eventId: "evt-1",
+          calendarId: "cal-1",
+          attendeeEmail: "cara@example.com",
+        },
+        fetcher,
+      ),
+    ).rejects.toMatchObject({ status: 403, message: "Insufficient permission" });
+    expect(requests.map((request) => request.method)).toEqual(["GET", "PATCH"]);
+  });
+
+  it("preserves existing attendees' responseStatus and displayName in the PATCH body", async () => {
+    const { fetcher, requests } = stubCalendarResponses([Response.json(existingEvent), Response.json(existingEvent)]);
+
+    await addAttendee(
+      {
+        eventId: "evt-1",
+        calendarId: "cal-1",
+        attendeeEmail: "cara@example.com",
+      },
+      fetcher,
+    );
+
+    expect(requests[1]?.body).toEqual({
+      attendees: [
+        { email: "alice@example.com", displayName: "Alice", responseStatus: "accepted" },
+        { email: "bob@example.com", responseStatus: "tentative" },
+        { email: "cara@example.com" },
+      ],
+    });
+  });
+});
+
+describe("googlecalendar.remove_attendee", () => {
+  it("GETs the event then PATCHes remaining attendees with If-Match and no sendUpdates by default", async () => {
+    const { fetcher, requests } = stubCalendarResponses([
+      Response.json(existingEvent),
+      Response.json({
+        ...existingEvent,
+        attendees: [{ email: "alice@example.com", displayName: "Alice", responseStatus: "accepted" }],
+      }),
+    ]);
+
+    const output = await removeAttendee(
+      {
+        eventId: "evt-1",
+        calendarId: "cal-1",
+        attendeeEmail: "Bob@Example.com",
+      },
+      fetcher,
+    );
+
+    expect(requests).toHaveLength(2);
+    expect(requests[0]?.method).toBe("GET");
+    expect(requests[0]?.url.searchParams.get("sendUpdates")).toBeNull();
+    expect(requests[1]?.method).toBe("PATCH");
+    expect(requests[1]?.url.pathname).toBe("/calendar/v3/calendars/cal-1/events/evt-1");
+    expect(requests[1]?.url.searchParams.get("sendUpdates")).toBeNull();
+    expect(requests[1]?.headers.get("if-match")).toBe('"etag-1"');
+    expect(requests[1]?.body).toEqual({
+      attendees: [{ email: "alice@example.com", displayName: "Alice", responseStatus: "accepted" }],
+    });
+    expect(output).toMatchObject({
+      id: "evt-1",
+      attendees: [{ email: "alice@example.com", displayName: "Alice", responseStatus: "accepted" }],
+    });
+  });
+
+  it("sends sendUpdates=none on the PATCH URL when requested", async () => {
+    const { fetcher, requests } = stubCalendarResponses([Response.json(existingEvent), Response.json(existingEvent)]);
+
+    await removeAttendee(
+      {
+        eventId: "evt-1",
+        calendarId: "cal-1",
+        attendeeEmail: "bob@example.com",
+        sendUpdates: "none",
+      },
+      fetcher,
+    );
+
+    expect(requests[1]?.url.searchParams.get("sendUpdates")).toBe("none");
+  });
+
+  it("sends sendUpdates=all on the PATCH URL when the caller asks for cancellations", async () => {
+    const { fetcher, requests } = stubCalendarResponses([Response.json(existingEvent), Response.json(existingEvent)]);
+
+    await removeAttendee(
+      {
+        eventId: "evt-1",
+        calendarId: "cal-1",
+        attendeeEmail: "bob@example.com",
+        sendUpdates: "all",
+      },
+      fetcher,
+    );
+
+    expect(requests[1]?.url.searchParams.get("sendUpdates")).toBe("all");
+  });
+
+  it("uses the primary calendar when calendarId is omitted", async () => {
+    const { fetcher, requests } = stubCalendarResponses([Response.json(existingEvent), Response.json(existingEvent)]);
+
+    await removeAttendee(
+      {
+        eventId: "evt-1",
+        attendeeEmail: "bob@example.com",
+      },
+      fetcher,
+    );
+
+    expect(requests[0]?.url.pathname).toBe("/calendar/v3/calendars/primary/events/evt-1");
+    expect(requests[1]?.url.pathname).toBe("/calendar/v3/calendars/primary/events/evt-1");
+  });
+
+  it("returns 400 when the attendee is not on the event", async () => {
+    const { fetcher, requests } = stubCalendarResponses([Response.json(existingEvent)]);
+
+    await expect(
+      removeAttendee(
+        {
+          eventId: "evt-1",
+          calendarId: "cal-1",
+          attendeeEmail: "cara@example.com",
+        },
+        fetcher,
+      ),
+    ).rejects.toEqual(new ProviderRequestError(400, "attendee not found: cara@example.com"));
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.method).toBe("GET");
+  });
+
+  it("returns 400 before fetching when sendUpdates is invalid", async () => {
+    const { fetcher, requests } = stubCalendarResponses([]);
+
+    await expect(
+      removeAttendee(
+        {
+          eventId: "evt-1",
+          attendeeEmail: "bob@example.com",
+          sendUpdates: "everyone",
+        },
+        fetcher,
+      ),
+    ).rejects.toEqual(new ProviderRequestError(400, "sendUpdates must be all, externalOnly, or none"));
+    expect(requests).toHaveLength(0);
+  });
+
+  it("returns 400 before fetching when sendUpdates is empty instead of treating it as omitted", async () => {
+    const { fetcher, requests } = stubCalendarResponses([]);
+
+    await expect(
+      removeAttendee(
+        {
+          eventId: "evt-1",
+          attendeeEmail: "bob@example.com",
+          sendUpdates: "",
+        },
+        fetcher,
+      ),
+    ).rejects.toEqual(new ProviderRequestError(400, "sendUpdates must be all, externalOnly, or none"));
+    expect(requests).toHaveLength(0);
+  });
+
+  it("retries the PATCH at most once and surfaces a second If-Match 412", async () => {
+    const { fetcher, requests } = stubCalendarResponses([
+      Response.json(existingEvent),
+      new Response(JSON.stringify({ error: { message: "Precondition Failed" } }), { status: 412 }),
+      Response.json({ ...existingEvent, etag: '"etag-2"' }),
+      new Response(JSON.stringify({ error: { message: "Precondition Failed" } }), { status: 412 }),
+    ]);
+
+    await expect(
+      removeAttendee(
+        {
+          eventId: "evt-1",
+          calendarId: "cal-1",
+          attendeeEmail: "bob@example.com",
+        },
+        fetcher,
+      ),
+    ).rejects.toMatchObject({ status: 412, message: "Precondition Failed" });
+    expect(requests.map((request) => request.method)).toEqual(["GET", "PATCH", "GET", "PATCH"]);
+  });
+
+  it("refuses to PATCH when Google omitted attendees from the GET payload", async () => {
+    const { fetcher, requests } = stubCalendarResponses([
+      Response.json({
+        ...existingEvent,
+        attendeesOmitted: true,
+      }),
+    ]);
+
+    await expect(
+      removeAttendee(
+        {
+          eventId: "evt-1",
+          calendarId: "cal-1",
+          attendeeEmail: "bob@example.com",
+        },
+        fetcher,
+      ),
+    ).rejects.toEqual(new ProviderRequestError(502, "googlecalendar returned an event with some attendees omitted"));
+    expect(requests).toHaveLength(1);
+  });
+
+  it("refuses to PATCH when the GET payload has no ETag", async () => {
+    const { fetcher, requests } = stubCalendarResponses([
+      Response.json({
+        id: "evt-1",
+        status: "confirmed",
+        attendees: existingEvent.attendees,
+      }),
+    ]);
+
+    await expect(
+      removeAttendee(
+        {
+          eventId: "evt-1",
+          calendarId: "cal-1",
+          attendeeEmail: "bob@example.com",
+        },
+        fetcher,
+      ),
+    ).rejects.toEqual(new ProviderRequestError(502, "googlecalendar returned an event without an etag"));
+    expect(requests).toHaveLength(1);
+  });
+
+  it("re-fetches, removes, and retries PATCH after an If-Match 412", async () => {
+    const concurrentEvent = {
+      ...existingEvent,
+      etag: '"etag-2"',
+      attendees: [...existingEvent.attendees, { email: "dan@example.com", responseStatus: "needsAction" }],
+    };
+    const { fetcher, requests } = stubCalendarResponses([
+      Response.json(existingEvent),
+      new Response(JSON.stringify({ error: { message: "Precondition Failed" } }), { status: 412 }),
+      Response.json(concurrentEvent),
+      Response.json({
+        ...concurrentEvent,
+        attendees: concurrentEvent.attendees.filter((attendee) => attendee.email !== "bob@example.com"),
+      }),
+    ]);
+
+    await removeAttendee(
+      {
+        eventId: "evt-1",
+        calendarId: "cal-1",
+        attendeeEmail: "bob@example.com",
+      },
+      fetcher,
+    );
+
+    expect(requests.map((request) => request.method)).toEqual(["GET", "PATCH", "GET", "PATCH"]);
+    expect(requests[1]?.headers.get("if-match")).toBe('"etag-1"');
+    expect(requests[3]?.headers.get("if-match")).toBe('"etag-2"');
+    expect(requests[3]?.body).toEqual({
+      attendees: [
+        { email: "alice@example.com", displayName: "Alice", responseStatus: "accepted" },
+        { email: "dan@example.com", responseStatus: "needsAction" },
+      ],
+    });
+  });
+});
+
+function addAttendee(input: Record<string, unknown>, fetcher: ProviderFetch) {
+  return googlecalendarEventActionHandlers.add_attendee(input, { accessToken, fetcher });
+}
+
 function createEvent(input: Record<string, unknown>, fetcher: ProviderFetch) {
   return googlecalendarEventActionHandlers.create_event(input, { accessToken, fetcher });
 }
@@ -414,6 +1028,10 @@ function moveEvent(input: Record<string, unknown>, fetcher: ProviderFetch) {
 
 function quickAddEvent(input: Record<string, unknown>, fetcher: ProviderFetch) {
   return googlecalendarEventActionHandlers.quick_add_event(input, { accessToken, fetcher });
+}
+
+function removeAttendee(input: Record<string, unknown>, fetcher: ProviderFetch) {
+  return googlecalendarEventActionHandlers.remove_attendee(input, { accessToken, fetcher });
 }
 
 function stubCalendarResponses(responses: Response[]): { fetcher: ProviderFetch; requests: CapturedRequest[] } {

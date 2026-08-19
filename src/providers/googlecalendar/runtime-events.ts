@@ -92,6 +92,7 @@ export type GooglecalendarEventActionName =
   | "sync_events"
   | "list_events_all_calendars"
   | "find_event"
+  | "add_attendee"
   | "remove_attendee";
 
 export const googlecalendarEventActionHandlers: Record<
@@ -136,6 +137,9 @@ export const googlecalendarEventActionHandlers: Record<
   },
   find_event(input, deps) {
     return findEvent(input, deps);
+  },
+  add_attendee(input, deps) {
+    return addAttendee(input, deps);
   },
   remove_attendee(input, deps) {
     return removeAttendee(input, deps);
@@ -427,41 +431,126 @@ async function listEventsAllCalendars(input: Record<string, unknown>, deps: Goog
   };
 }
 
-async function removeAttendee(input: Record<string, unknown>, deps: GooglecalendarEventRuntimeDeps) {
-  const calendarId = pickOptionalString(input, "calendarId") ?? "primary";
-  const eventId = resolveEventId(input);
-  const attendeeEmail = requireInputString(input, "attendeeEmail", "attendeeEmail").toLowerCase();
-  const event = (await getEvent(
-    {
-      calendarId,
-      eventId,
-    },
-    deps,
-  )) as Record<string, unknown>;
-  const attendees = Array.isArray(event.attendees)
-    ? event.attendees
-        .filter((attendee): attendee is Record<string, unknown> => !!attendee && typeof attendee === "object")
-        .map((attendee) => pickKnownFields(attendee, attendeeKeys))
-    : [];
-  const remaining = attendees.filter((attendee) => optionalString(attendee.email)?.toLowerCase() !== attendeeEmail);
+async function addAttendee(input: Record<string, unknown>, deps: GooglecalendarEventRuntimeDeps) {
+  const attendeeEmail = requireInputString(input, "attendeeEmail", "attendeeEmail");
+  const addedAttendee = compactObject({
+    email: attendeeEmail,
+    displayName: pickOptionalString(input, "displayName"),
+    optional: pickOptionalBoolean(input, "optional"),
+  });
 
-  if (remaining.length === attendees.length) {
-    throw new ProviderRequestError(
-      400,
-      `attendee not found: ${requireInputString(input, "attendeeEmail", "attendeeEmail")}`,
-    );
-  }
-
-  return patchEvent(
+  return patchEventAttendees(
     {
-      calendarId,
-      eventId,
-      event: {
-        attendees: remaining,
+      calendarId: pickOptionalString(input, "calendarId") ?? "primary",
+      eventId: resolveEventId(input),
+      sendUpdates: pickSendUpdates(input, "all"),
+      conflictMessage: "event changed while adding attendee",
+      apply(attendees) {
+        if (
+          attendees.some((attendee) => optionalString(attendee.email)?.toLowerCase() === attendeeEmail.toLowerCase())
+        ) {
+          return { kind: "skip" };
+        }
+        return { kind: "patch", attendees: [...attendees, addedAttendee] };
       },
     },
     deps,
   );
+}
+
+async function removeAttendee(input: Record<string, unknown>, deps: GooglecalendarEventRuntimeDeps) {
+  const attendeeEmail = requireInputString(input, "attendeeEmail", "attendeeEmail");
+
+  return patchEventAttendees(
+    {
+      calendarId: pickOptionalString(input, "calendarId") ?? "primary",
+      eventId: resolveEventId(input),
+      sendUpdates: pickSendUpdates(input),
+      conflictMessage: "event changed while removing attendee",
+      apply(attendees) {
+        const remaining = attendees.filter(
+          (attendee) => optionalString(attendee.email)?.toLowerCase() !== attendeeEmail.toLowerCase(),
+        );
+        if (remaining.length === attendees.length) {
+          throw new ProviderRequestError(400, `attendee not found: ${attendeeEmail}`);
+        }
+        return { kind: "patch", attendees: remaining };
+      },
+    },
+    deps,
+  );
+}
+
+interface PatchEventAttendeesInput {
+  calendarId: string;
+  eventId: string;
+  sendUpdates: string | undefined;
+  conflictMessage: string;
+  apply(
+    attendees: Array<Record<string, unknown>>,
+  ): { kind: "skip" } | { kind: "patch"; attendees: Array<Record<string, unknown>> };
+}
+
+async function patchEventAttendees(
+  input: PatchEventAttendeesInput,
+  deps: GooglecalendarEventRuntimeDeps,
+): Promise<Record<string, unknown>> {
+  let event = await fetchCalendarEvent(input.calendarId, input.eventId, deps);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    assertCompleteAttendeeList(event);
+    const decision = input.apply(readEventAttendees(event));
+    if (decision.kind === "skip") {
+      return event;
+    }
+
+    const etag = optionalString(event.etag);
+    if (!etag) {
+      throw new ProviderRequestError(502, "googlecalendar returned an event without an etag");
+    }
+
+    try {
+      return await googlecalendarJsonRequest(eventUrl(input.calendarId, input.eventId), {
+        accessToken: deps.accessToken,
+        fetcher: deps.fetcher,
+        method: "PATCH",
+        query: { sendUpdates: input.sendUpdates },
+        headers: { "If-Match": etag },
+        body: {
+          attendees: decision.attendees,
+        },
+      });
+    } catch (error) {
+      if (attempt > 0 || !(error instanceof ProviderRequestError) || error.status !== 412) {
+        throw error;
+      }
+      event = await fetchCalendarEvent(input.calendarId, input.eventId, deps);
+    }
+  }
+
+  throw new ProviderRequestError(412, input.conflictMessage);
+}
+
+function readEventAttendees(event: Record<string, unknown>) {
+  return Array.isArray(event.attendees)
+    ? event.attendees
+        .filter((attendee): attendee is Record<string, unknown> => !!attendee && typeof attendee === "object")
+        .map((attendee) => pickKnownFields(attendee, attendeeKeys))
+    : [];
+}
+
+async function fetchCalendarEvent(
+  calendarId: string,
+  eventId: string,
+  deps: GooglecalendarEventRuntimeDeps,
+): Promise<Record<string, unknown>> {
+  return (await getEvent({ calendarId, eventId }, deps)) as Record<string, unknown>;
+}
+
+function assertCompleteAttendeeList(event: Record<string, unknown>): void {
+  // events.patch replaces the whole attendees array, so refuse when Google omitted guests.
+  if (event.attendeesOmitted === true) {
+    throw new ProviderRequestError(502, "googlecalendar returned an event with some attendees omitted");
+  }
 }
 
 function buildListEventsQuery(input: Record<string, unknown>, options?: { syncMode?: boolean }) {
@@ -510,10 +599,10 @@ function buildEventWriteQuery(event: Record<string, unknown>, sendUpdates: strin
   });
 }
 
-function pickSendUpdates(input: Record<string, unknown>) {
+function pickSendUpdates(input: Record<string, unknown>, fallback?: string): string | undefined {
   const sendUpdates = input.sendUpdates;
   if (sendUpdates === undefined) {
-    return undefined;
+    return fallback;
   }
   if (sendUpdates !== "all" && sendUpdates !== "externalOnly" && sendUpdates !== "none") {
     throw new ProviderRequestError(400, "sendUpdates must be all, externalOnly, or none");
