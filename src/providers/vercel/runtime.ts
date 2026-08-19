@@ -100,6 +100,9 @@ export const vercelActionHandlers: Record<VercelActionName, VercelActionHandler>
   create_webhook(input: VercelActionInput, context: VercelActionContext): Promise<unknown> {
     return vercelCreateWebhook(input, context);
   },
+  delete_webhook(input: VercelActionInput, context: VercelActionContext): Promise<unknown> {
+    return vercelDeleteWebhook(input, context);
+  },
 };
 
 export async function validateVercelCredential(
@@ -608,6 +611,20 @@ async function vercelCreateWebhook(input: VercelActionInput, context: VercelActi
   };
 }
 
+async function vercelDeleteWebhook(input: VercelActionInput, context: VercelActionContext) {
+  const id = requireString(input.id, "id");
+  await requestVercelNoContent({
+    path: `/v1/webhooks/${encodeURIComponent(id)}`,
+    apiKey: context.apiKey,
+    fetcher: context.fetcher,
+    mode: "execute",
+    method: "DELETE",
+    notFoundAsInvalidInput: true,
+  });
+
+  return { deleted: true };
+}
+
 interface VercelRequestOptions {
   path: string;
   apiKey: string;
@@ -648,11 +665,47 @@ interface VercelTeamResponse {
 }
 
 async function requestVercelJson<T>(options: VercelRequestOptions): Promise<T> {
+  const response = await requestVercel(options);
+
+  if (!response.ok) {
+    throw await mapVercelError(response, options.mode, options.notFoundAsInvalidInput ?? false);
+  }
+
+  if (response.status === 204) {
+    throw new ProviderRequestError(502, "vercel returned 204 No Content for a JSON request");
+  }
+
+  const text = await response.text();
+  if (!text.trim()) {
+    throw new ProviderRequestError(502, "vercel returned an empty response");
+  }
+
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new ProviderRequestError(502, "vercel returned an invalid JSON response");
+  }
+}
+
+async function requestVercelNoContent(options: VercelRequestOptions & { method: "DELETE" }): Promise<void> {
+  const response = await requestVercel(options);
+
+  if (response.status === 204) {
+    return;
+  }
+
+  if (!response.ok) {
+    throw await mapVercelError(response, options.mode, options.notFoundAsInvalidInput ?? false);
+  }
+
+  throw new ProviderRequestError(502, "vercel returned a response body for a no-content request");
+}
+
+async function requestVercel(options: VercelRequestOptions): Promise<Response> {
   const url = buildVercelUrl(options.path, options.query);
 
-  let response: Response;
   try {
-    response = await options.fetcher(url, {
+    return await options.fetcher(url, {
       method: options.method ?? "GET",
       headers: vercelHeaders(options.apiKey, options.body !== undefined),
       ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
@@ -660,12 +713,6 @@ async function requestVercelJson<T>(options: VercelRequestOptions): Promise<T> {
   } catch (error) {
     throw new ProviderRequestError(502, error instanceof Error ? error.message : "vercel request failed");
   }
-
-  if (!response.ok) {
-    throw await mapVercelError(response, options.mode, options.notFoundAsInvalidInput ?? false);
-  }
-
-  return response.json() as Promise<T>;
 }
 
 function buildVercelUrl(path: string, query?: Record<string, string>): string {
@@ -699,7 +746,7 @@ async function mapVercelError(
   if (response.status === 401) {
     return new ProviderRequestError(mode === "validate" ? 400 : 401, error.message, error);
   }
-  if (response.status === 404 && notFoundAsInvalidInput) {
+  if ((response.status === 404 || response.status === 410) && notFoundAsInvalidInput) {
     return new ProviderRequestError(400, error.message, error);
   }
   if (response.status === 429) {
