@@ -172,10 +172,17 @@ curl -s -X POST "http://localhost:3000/v1/actions/github.get_current_user?alias=
   -d '{"input":{}}'
 ```
 
+`alias` is the `/v1` name for a named connection. MCP tools use `connectionName` for the same
+fact, and HTTP also accepts `connectionName` in the query or JSON body. The default connection is
+`default`.
+
 Persistent tokens with a non-empty `allowedConnections` list must be granted the selected stable
 connection ID. Omitting the alias selects the target provider's default connection and is denied
 unless that connection's ID is listed. The denial is HTTP `403` with `connection_not_allowed` and happens before
 credential lookup. `/v1/apps` discovery for that token is filtered to granted credential connections.
+
+Unknown Action ids return `404 unknown_action` on both `/v1` and MCP `execute_action` /
+`get_action_guide`. Schema and idempotency-key failures stay `400 invalid_input`.
 
 ### Idempotent Action Retries
 
@@ -257,6 +264,9 @@ by age.
 - `GET /v1/apps/services/:service`
 - `GET /v1/apps/authenticated`
 - `POST /v1/proxy/:service`
+
+`GET /v1/apps/authenticated` checks the repeated `service` query values and returns the authenticated
+service IDs from that candidate set. It returns an empty list when no candidates are supplied.
 
 `POST /v1/proxy/:service` proxies one provider API request when that provider has a registered or
 provider-specific local proxy executor. Providers without a proxy executor return `proxy_not_supported`.

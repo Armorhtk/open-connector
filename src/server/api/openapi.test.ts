@@ -60,6 +60,14 @@ describe("action execution OpenAPI", () => {
         description:
           "Optional runtime-wide key for deduplicating retries of the same action request. Leading and trailing whitespace is trimmed; the remaining value must be non-empty and must not exceed 255 UTF-8 bytes. Reuse a key only for retries with the same action, input, effective connection, and stored runtime token. When this header is present, the action input must not exceed an object/array nesting depth of 100 levels.",
       });
+      expect(path.post.parameters).toContainEqual({
+        name: "connectionName",
+        in: "query",
+        required: false,
+        schema: { type: "string" },
+        description:
+          "Named connection. Same fact as MCP connectionName; HTTP alias, connectionName, and x-oo-connector-alias are equivalent. Defaults to default.",
+      });
       expect(path.post.responses["409"]?.description).toBe(
         "For idempotency, idempotency_request_in_progress means the original request is still running or its outcome is uncertain, while idempotency_key_conflict means the key was reused for a different action, input, effective connection, or stored runtime token. Other runtime conflicts may return their own error code with the same status.",
       );
@@ -72,6 +80,74 @@ describe("action execution OpenAPI", () => {
       expect(path.post.description).toContain("does not guarantee exactly-once execution");
     },
   );
+
+  it("documents public /v1 catalog routes with the runtime envelope", () => {
+    const document = createOpenApiDocument([provider]);
+    const search = document.paths["/v1/actions/search"] as {
+      get: {
+        responses: Record<string, { content?: { "application/json"?: { schema?: { required?: string[] } } } }>;
+      };
+    };
+    const actionPath = document.paths["/v1/actions/{actionId}"] as { get?: unknown; post?: unknown };
+    const authenticatedApps = document.paths["/v1/apps/authenticated"] as {
+      get: { summary: string; parameters: Array<{ name: string; description: string }> };
+    };
+    const connectedApp = document.components.schemas.RuntimeConnectedApp as {
+      required: string[];
+      properties: { alias?: { description?: string } };
+    };
+
+    const health = document.paths["/v1/health"] as {
+      get: {
+        responses: Record<
+          string,
+          {
+            content?: {
+              "application/json"?: {
+                schema?: {
+                  type?: string;
+                  required?: string[];
+                  properties?: { data?: { type?: string; required?: string[] } };
+                };
+              };
+            };
+          }
+        >;
+      };
+    };
+    const healthSchema = health.get.responses["200"]?.content?.["application/json"]?.schema;
+    const healthDataSchema = healthSchema?.properties?.data;
+
+    expect(document.paths["/v1/health"]).toBeDefined();
+    expect(document.paths["/v1/providers"]).toBeDefined();
+    expect(document.paths["/v1/actions"]).toBeDefined();
+    expect(document.paths["/v1/apps"]).toBeDefined();
+    expect(actionPath.get).toBeDefined();
+    expect(actionPath.post).toBeDefined();
+    expect(healthSchema?.type).toBe("object");
+    expect(healthSchema?.required).toEqual(expect.arrayContaining(["success", "message", "data", "meta"]));
+    expect(healthDataSchema?.type).toBe("object");
+    expect(healthDataSchema?.required).toEqual(expect.arrayContaining(["ok", "runtime"]));
+    expect(document.components.schemas.ActionSearchRuntimeResult).toEqual({
+      $ref: "#/components/schemas/ActionSearchResult",
+    });
+    expect(search.get.responses["400"]?.content?.["application/json"]?.schema?.required).toEqual(
+      expect.arrayContaining(["success", "errorCode"]),
+    );
+    expect(search.get.responses["404"]).toBeUndefined();
+    expect(connectedApp.required).toEqual(expect.arrayContaining(["alias", "isDefault"]));
+    expect(connectedApp.properties.alias?.description).toContain("connectionName");
+    expect(connectedApp.properties.alias?.description).not.toContain("x-oomol-connector-alias");
+    expect(authenticatedApps.get.summary).toBe(
+      "Return authenticated provider service IDs from the supplied candidates.",
+    );
+    expect(authenticatedApps.get.parameters).toContainEqual(
+      expect.objectContaining({
+        name: "service",
+        description: "Candidate service id to check. Repeat to check multiple services.",
+      }),
+    );
+  });
 
   it("documents Runtime and token policy management and run audit metadata", () => {
     const document = createOpenApiDocument([provider]);

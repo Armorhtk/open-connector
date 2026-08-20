@@ -484,10 +484,25 @@ describe("ConnectServer", () => {
     });
     expect(action.status).toBe(400);
     await expect(action.json()).resolves.toEqual({
-      error: {
-        code: "invalid_json",
-        message: "Request body must be valid JSON.",
-      },
+      success: false,
+      message: "Request body must be valid JSON.",
+      data: null,
+      errorCode: "invalid_json",
+      meta: {},
+    });
+
+    const proxy = await app.request("/v1/proxy/example", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{",
+    });
+    expect(proxy.status).toBe(400);
+    await expect(proxy.json()).resolves.toEqual({
+      success: false,
+      message: "Request body must be valid JSON.",
+      data: null,
+      errorCode: "invalid_json",
+      meta: { service: "example" },
     });
   });
 
@@ -508,10 +523,11 @@ describe("ConnectServer", () => {
 
       expect(response.status).toBe(400);
       await expect(response.json()).resolves.toEqual({
-        error: {
-          code: "invalid_json",
-          message: "Request body must be a JSON object.",
-        },
+        success: false,
+        message: "Request body must be a JSON object.",
+        data: null,
+        errorCode: "invalid_json",
+        meta: {},
       });
     }
   });
@@ -3042,7 +3058,7 @@ describe("ConnectServer", () => {
     expect(unknown.status).toBe(404);
     await expect(unknown.json()).resolves.toMatchObject({
       success: false,
-      errorCode: "invalid_input",
+      errorCode: "unknown_action",
       meta: { actionId: "example.missing" },
     });
 
