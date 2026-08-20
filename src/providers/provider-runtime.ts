@@ -33,6 +33,8 @@ export interface ProviderFetchOptions {
    * derived from user/credential input. See {@link GuardedFetchOptions.skipDnsValidation}.
    */
   skipDnsValidation?: boolean;
+  /** Additional credential-bearing headers to strip from cross-origin redirects. */
+  additionalSensitiveHeaders?: readonly string[];
 }
 
 /**
@@ -46,6 +48,7 @@ export function createProviderFetch(options: ProviderFetchOptions = {}): Provide
     fetch: options.fetch,
     allowPrivateNetwork: options.allowPrivateNetwork,
     skipDnsValidation: options.skipDnsValidation,
+    additionalSensitiveHeaders: options.additionalSensitiveHeaders,
     mapTransportError: (error) =>
       error instanceof TypeError
         ? new ProviderRequestError(502, `provider network request failed${describeTransportCauseCode(error)}`)
@@ -285,6 +288,8 @@ export interface ProviderProxyDefinition {
   auth: ProviderProxyAuth;
   allowedEndpoint?: (endpoint: string) => boolean;
   customizeRequest?: (input: ProviderProxyRequestCustomizationInput) => Promise<void> | void;
+  /** Exact code-controlled origins that `customizeRequest` may select in addition to the resolved base origin. */
+  allowedOrigins?: readonly string[];
   /** Deployment-gated private-network opt-in applied to this proxy's egress fetch (currently Dokploy). */
   allowPrivateNetwork?: () => boolean;
   /** Skip the redundant DNS resolved-address check; only for hardcoded-base-URL proxies. */
@@ -300,11 +305,15 @@ const blockedProxyRequestHeaders = new Set([
 ]);
 const defaultProviderProxyMaxResponseBytes = 20 * 1024 * 1024;
 const defaultProviderJsonMaxResponseBytes = 20 * 1024 * 1024;
+const defaultProviderErrorMaxResponseBytes = 64 * 1024;
 
 export function createProviderProxyUrl(baseUrl: string, endpointInput: unknown, queryInput?: unknown): URL {
   const endpoint = normalizeProviderProxyEndpoint(endpointInput);
   const base = new URL(baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`);
   const url = new URL(endpoint.slice(1), base);
+  if (url.origin !== base.origin) {
+    throw new ProviderRequestError(400, "endpoint must stay on the provider origin");
+  }
   for (const [key, value] of Object.entries(normalizeProviderProxyQuery(queryInput))) {
     url.searchParams.set(key, value);
   }
@@ -317,8 +326,10 @@ export function normalizeProviderProxyEndpoint(endpointInput: unknown): string {
     throw new ProviderRequestError(400, "endpoint must be a relative path starting with /");
   }
   try {
-    new URL(endpoint);
-    throw new ProviderRequestError(400, "endpoint must be a relative path");
+    const url = new URL(endpoint.slice(1));
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      throw new ProviderRequestError(400, "endpoint must be a relative path");
+    }
   } catch (error) {
     if (error instanceof ProviderRequestError) {
       throw error;
@@ -459,13 +470,13 @@ export function toProviderProxyError(error: unknown, fallbackMessage: string): P
 }
 
 export function defineProviderProxy(input: ProviderProxyDefinition): ProviderProxyExecutor {
-  const egressFetch =
-    input.allowPrivateNetwork || input.skipDnsValidation
-      ? createProviderFetch({
-          allowPrivateNetwork: input.allowPrivateNetwork,
-          skipDnsValidation: input.skipDnsValidation,
-        })
-      : providerFetch;
+  const allowedOrigins = new Set(input.allowedOrigins?.map((value) => new URL(value).origin));
+  const additionalSensitiveHeaders = input.auth.type === "api_key_header" ? [input.auth.name] : undefined;
+  const egressFetch = createProviderFetch({
+    allowPrivateNetwork: input.allowPrivateNetwork,
+    skipDnsValidation: input.skipDnsValidation,
+    additionalSensitiveHeaders,
+  });
   return async (proxyInput: ProxyRequestInput, context: ExecutionContext): Promise<ProxyExecutionResult> => {
     try {
       const endpoint = normalizeProviderProxyEndpoint(proxyInput.endpoint);
@@ -478,6 +489,7 @@ export function defineProviderProxy(input: ProviderProxyDefinition): ProviderPro
         endpoint,
         proxyInput.query,
       );
+      const providerOrigin = url.origin;
       const headers = normalizeProviderProxyHeaders(proxyInput.headers);
       headers.set("user-agent", providerUserAgent);
       const credential = await applyProviderProxyAuth(input, context, url, headers);
@@ -490,6 +502,9 @@ export function defineProviderProxy(input: ProviderProxyDefinition): ProviderPro
         credential,
         fetcher: egressFetch,
       });
+      if (url.origin !== providerOrigin && !allowedOrigins.has(url.origin)) {
+        throw new ProviderRequestError(400, "endpoint must stay on the provider origin");
+      }
 
       const init: RequestInit = {
         method: proxyInput.method,
@@ -661,6 +676,17 @@ export function setSearchParams(url: URL, query: Record<string, string | undefin
 }
 
 /**
+ * Read a bounded provider error response body as text.
+ */
+export async function readProviderErrorTextBody(response: Response, fieldName: string): Promise<string> {
+  try {
+    return await readProviderTextBody(response, fieldName, defaultProviderErrorMaxResponseBytes);
+  } catch {
+    return "";
+  }
+}
+
+/**
  * Read a JSON provider response or raise a structured provider request error.
  */
 export async function readProviderJson<T>(response: Response, source: string): Promise<T> {
@@ -668,7 +694,7 @@ export async function readProviderJson<T>(response: Response, source: string): P
     return response.json() as Promise<T>;
   }
 
-  const text = await response.text().catch(() => "");
+  const text = await readProviderErrorTextBody(response, `${source} error response`);
   throw new ProviderRequestError(response.status, text || `${source} request failed`);
 }
 
@@ -758,7 +784,7 @@ export async function uploadProviderUrlToTransitFile(
     );
   }
   if (!response.ok) {
-    const text = await response.text().catch(() => "");
+    const text = await readProviderErrorTextBody(response, `${input.source} error response`);
     throw new ProviderRequestError(
       response.status >= 500 ? 502 : response.status,
       text || `${input.source} transit download failed with HTTP ${response.status}`,
