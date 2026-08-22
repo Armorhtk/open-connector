@@ -172,10 +172,6 @@ export async function validateInvoiceNinjaCredential(
   };
 }
 
-function resolveInvoiceNinjaProxyBaseUrl(context: { providerMetadata: Record<string, unknown> }) {
-  return storedApiBaseUrl(context.providerMetadata);
-}
-
 export function normalizeInvoiceNinjaUrls(
   value: unknown,
   allowPrivateNetwork: boolean = isPrivateNetworkAccessAllowed(),
