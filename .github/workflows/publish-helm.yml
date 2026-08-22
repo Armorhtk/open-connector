@@ -1,0 +1,315 @@
+name: Publish Helm chart
+
+# Pushes the chart at deploy/helm/open-connector to GitHub Packages (ghcr.io)
+# as an OCI artifact. Mirror the tag scheme from publish-docker.yml so the
+# Helm chart and Docker image advance in lock-step:
+#
+#   push to main        -> <chart-version>-tip            (latest main build)
+#                         <chart-version>-tip.<short-sha> (immutable ref)
+#   published release   -> <chart-version>                (when chart version
+#                                                          matches the release)
+#                         <chart-version>  + latest      (non-prerelease only)
+#
+# Pulling the published chart:
+#   helm pull oci://ghcr.io/$OWNER/charts/open-connector --version 0.1.0
+#
+# ghcr.io packages are private by default. Promote a release to public by
+# editing the package's visibility in the GitHub Packages UI, or call
+#   gh api -X PATCH /users/{user}/packages/container/charts%2Fopen-connector -f visibility=public
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/helm/open-connector/**"
+      - ".github/workflows/publish-helm.yml"
+  release:
+    types: [published]
+  workflow_dispatch:
+
+# Least privilege: read the repo, write to push packages to ghcr.io.
+permissions:
+  contents: read
+  packages: write
+
+# One in-flight publish per ref. main-branch pushes share a group so a
+# newer commit cancels an older, still-running build - this keeps the
+# "tip" tag pointing at the most recent commit. Releases use their own
+# per-tag group and are never cancelled.
+concurrency:
+  group: publish-helm-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+jobs:
+  publish:
+    name: Publish
+    runs-on: ubuntu-latest
+    env:
+      CHART_PATH: deploy/helm/open-connector
+      # ghcr.io requires OCI artifacts to be linked to a repository. We use
+      # a dedicated "charts" namespace inside the owner's account so the
+      # package name is `charts/open-connector`, distinct from the docker
+      # image package `open-connector`. Override here to push elsewhere
+      # (e.g. oci://ghcr.io/${{ github.repository_owner }}/open-connector/helm).
+      OCI_REPO: oci://ghcr.io/${{ github.repository_owner }}/charts
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Helm
+        id: setup-helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+
+      - name: Read chart metadata
+        id: meta
+        run: |
+          version=$(grep '^version:' "${{ env.CHART_PATH }}/Chart.yaml" | awk '{print $2}')
+          name=$(grep '^name:'    "${{ env.CHART_PATH }}/Chart.yaml" | head -1 | awk '{print $2}')
+          if [[ -z "${version}" || -z "${name}" ]]; then
+            echo "::error::Could not read name/version from Chart.yaml"
+            exit 1
+          fi
+          echo "name=${name}"       >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Chart: ${name} v${version}"
+
+      # Derive registry host, namespace, and full package name from
+      # OCI_REPO so every downstream step (login, helm push, ORAS copy,
+      # gh API, install instructions) consumes the same configured target.
+      # Override OCI_REPO at the job level and the change propagates.
+      - name: Parse OCI_REPO
+        id: oci
+        env:
+          OCI_REPO: ${{ env.OCI_REPO }}
+          CHART_NAME: ${{ steps.meta.outputs.name }}
+        run: |
+          set -euo pipefail
+          oci_repo="${OCI_REPO}"
+          if [[ "${oci_repo}" != oci://* ]]; then
+            echo "::error::OCI_REPO must start with 'oci://' (got '${oci_repo}')"
+            exit 1
+          fi
+          no_proto="${oci_repo#oci://}"
+          host="${no_proto%%/*}"
+          rest="${no_proto#*/}"
+          if [[ -z "${host}" || -z "${rest}" || "${rest}" == "${no_proto}" ]]; then
+            echo "::error::OCI_REPO must include a host and namespace (got '${oci_repo}')"
+            exit 1
+          fi
+          namespace="${rest}"
+          chart_name="${CHART_NAME}"
+          package_name="${namespace}/${chart_name}"
+          owner="${namespace%%/*}"
+          if [[ -z "${owner}" || "${owner}" == "${namespace}" ]]; then
+            echo "::error::OCI_REPO namespace must include an owner (got '${namespace}')"
+            exit 1
+          fi
+          {
+            echo "host=${host}"
+            echo "namespace=${namespace}"
+            echo "chart_name=${chart_name}"
+            echo "package_name=${package_name}"
+            echo "owner=${owner}"
+          } >> "$GITHUB_OUTPUT"
+          echo "OCI: ${host} / ${namespace} / ${chart_name} -> ${package_name} (owner=${owner})"
+
+      - name: Helm lint
+        id: lint
+        run: helm lint "${{ env.CHART_PATH }}"
+
+      - name: Validate release tag matches chart version
+        id: validate
+        if: github.event_name == 'release'
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          CHART_VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          # Strip a leading 'v' from the release tag (v1.4.0 -> 1.4.0)
+          # so releases can be tagged with or without the conventional prefix.
+          stripped="${RELEASE_TAG#v}"
+          if [[ "${stripped}" != "${CHART_VERSION}" ]]; then
+            echo "::error::Chart version ${CHART_VERSION} does not match release tag ${RELEASE_TAG}"
+            echo "::error::Bump Chart.yaml 'version:' to ${stripped} before publishing this release."
+            exit 1
+          fi
+
+      - name: Compute package version
+        id: version
+        env:
+          CHART_VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            # For releases, the package version is the chart version itself.
+            # The validation step above has already confirmed it matches
+            # the release tag.
+            version="${CHART_VERSION}"
+          else
+            # For main-branch pushes, use the full triggering commit SHA as
+            # the unique SemVer build suffix so every commit produces a
+            # distinct, installable chart. Using the full SHA removes the
+            # 7-char abbreviation that `git rev-parse --short` returns and
+            # eliminates the (rare) collision risk.
+            version="${CHART_VERSION}-tip.${{ github.sha }}"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      # Package after the package version is known, so the .tgz filename
+      # matches what `Push chart OCI artifact` reads below. Previously the
+      # package step ran before the version was computed, and the .tgz for
+      # main-branch pushes had the wrong name (e.g. open-connector-0.1.0.tgz
+      # vs. the expected open-connector-0.1.0-tip.<sha>.tgz).
+      - name: Helm package
+        id: pkg
+        run: |
+          helm package "${{ env.CHART_PATH }}" \
+            --destination .charts \
+            --version "${{ steps.version.outputs.version }}"
+
+      - name: Log in to registry
+        id: login
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ steps.oci.outputs.host }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push chart OCI artifact
+        id: push-chart
+        run: |
+          # The version embedded in the .tgz filename is what helm push
+          # uses as the OCI tag. We deliberately do NOT pass --version:
+          # doing so would create a duplicate OCI manifest under a
+          # different tag instead of referencing the same artifact.
+          tgz=".charts/${{ steps.meta.outputs.name }}-${{ steps.version.outputs.version }}.tgz"
+          helm push "${tgz}" "${{ env.OCI_REPO }}"
+
+      - name: Tag release as 'latest'
+        id: tag-latest
+        if: github.event_name == 'release' && github.event.release.prerelease == false
+        env:
+          REGISTRY: ${{ steps.oci.outputs.host }}/${{ steps.oci.outputs.namespace }}
+          CHART_NAME: ${{ steps.oci.outputs.chart_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Copy the just-pushed manifest to the "latest" tag via ORAS
+          # so we reference the same OCI artifact instead of duplicating
+          # it. This is a separate tag flow from the main helm push above.
+          curl -sSfLo /tmp/oras.tgz \
+            "https://github.com/oras-project/oras/releases/download/v1.2.2/oras_1.2.2_linux_amd64.tar.gz"
+          # Pin the download to its published SHA-256 so a tampered or
+          # repackaged upstream release fails the workflow before we
+          # extract the binary.
+          echo "bff970346470e5ef888e9f2c0bf7f8ee47283f5a45207d6e7a037da1fb0eae0d  /tmp/oras.tgz" | sha256sum -c -
+          tar -xz -C /usr/local/bin -f /tmp/oras.tgz oras
+
+          oras copy \
+            "${REGISTRY}/${CHART_NAME}:${VERSION}" \
+            "${REGISTRY}/${CHART_NAME}:latest"
+
+      - name: Promote release to public (best-effort)
+        id: promote-public
+        if: github.event_name == 'release' && github.event.release.prerelease == false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ steps.oci.outputs.owner }}
+          PACKAGE_NAME: ${{ steps.oci.outputs.package_name }}
+        run: |
+          # OCI packages on the registry are private by default; flip the
+          # published chart package to public so `helm pull` works without
+          # auth. Try the user endpoint first, then the org endpoint. The
+          # step exits 0 as long as at least one endpoint succeeds; if both
+          # fail we surface the failure as a warning and mark the step as
+          # failed so the workflow summary can report it (visibility can
+          # always be changed in the GitHub Packages UI).
+          encoded=$(printf '%s' "${PACKAGE_NAME}" | jq -Rr @uri)
+          ENDPOINTS=(
+            "/users/${OWNER}/packages/container/${encoded}"
+            "/orgs/${OWNER}/packages/container/${encoded}"
+          )
+          success_count=0
+          for ep in "${ENDPOINTS[@]}"; do
+            if gh api \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              -X PATCH \
+              "${ep}" \
+              -f visibility=public >/dev/null 2>&1; then
+              echo "Promoted ${PACKAGE_NAME} to public via ${ep}"
+              success_count=$((success_count + 1))
+            else
+              echo "::warning::Failed to flip ${PACKAGE_NAME} visibility to public at ${ep}"
+            fi
+          done
+          echo "promote_success_count=${success_count}" >> "$GITHUB_OUTPUT"
+          if [[ ${success_count} -eq 0 ]]; then
+            echo "::warning::Public promotion failed at all attempted endpoints. Package remains private; flip it manually in the GitHub Packages UI."
+            exit 1
+          fi
+
+      - name: Workflow summary
+        if: always()
+        env:
+          SETUP_HELM_RESULT: ${{ steps.setup-helm.conclusion }}
+          META_RESULT: ${{ steps.meta.conclusion }}
+          VALIDATE_RESULT: ${{ steps.validate.conclusion }}
+          LINT_RESULT: ${{ steps.lint.conclusion }}
+          PACKAGE_RESULT: ${{ steps.pkg.conclusion }}
+          LOGIN_RESULT: ${{ steps.login.conclusion }}
+          PUSH_RESULT: ${{ steps.push-chart.conclusion }}
+          TAG_LATEST_RESULT: ${{ steps.tag-latest.conclusion }}
+          PROMOTE_PUBLIC_RESULT: ${{ steps.promote-public.conclusion }}
+          PROMOTE_PUBLIC_SUCCESS_COUNT: ${{ steps.promote-public.outputs.promote_success_count }}
+        run: |
+          {
+            # Required for "published": push-chart succeeded.
+            # tag-latest is only required when it actually runs (non-prerelease
+            # release); on push events and prereleases it's skipped, not failed.
+            push="${PUSH_RESULT:-skipped}"
+            tag_latest="${TAG_LATEST_RESULT:-skipped}"
+            promote="${PROMOTE_PUBLIC_RESULT:-skipped}"
+            promote_ok="${PROMOTE_PUBLIC_SUCCESS_COUNT:-0}"
+
+            if [[ "${push}" == "success" ]] && [[ "${tag_latest}" != "failure" ]]; then
+              if [[ "${promote}" == "success" ]]; then
+                echo "## Helm chart fully published"
+              else
+                echo "## Helm chart published (with warnings)"
+              fi
+              echo
+              echo "- **Chart**: \`${{ steps.meta.outputs.name }}\`"
+              echo "- **Version**: \`${{ steps.version.outputs.version }}\`"
+              echo "- **Registry**: \`${{ env.OCI_REPO }}\`"
+              echo
+              echo "Install with:"
+              echo '```'
+              echo "helm install open-connector \\"
+              echo "  ${{ env.OCI_REPO }}/${{ steps.meta.outputs.name }} \\"
+              echo "  --version ${{ steps.version.outputs.version }}"
+              echo '```'
+
+              if [[ "${promote}" != "success" ]]; then
+                echo
+                echo "⚠️ **Public promotion did not complete** (\`${promote}\`). The chart OCI artifact is published but the ghcr.io package may still be private. Flip its visibility in the GitHub Packages UI or re-run this job."
+              fi
+            else
+              echo "## Helm chart publish failed"
+              echo
+              echo "The chart was **not** fully published. Do not install from this run."
+              echo
+              echo "| Step | Result |"
+              echo "| --- | --- |"
+              echo "| Setup Helm | \`${SETUP_HELM_RESULT:-skipped}\` |"
+              echo "| Read chart metadata | \`${META_RESULT:-skipped}\` |"
+              echo "| Validate release tag | \`${VALIDATE_RESULT:-skipped}\` |"
+              echo "| Lint | \`${LINT_RESULT:-skipped}\` |"
+              echo "| Package | \`${PACKAGE_RESULT:-skipped}\` |"
+              echo "| Registry login | \`${LOGIN_RESULT:-skipped}\` |"
+              echo "| Push chart OCI artifact | \`${PUSH_RESULT:-skipped}\` |"
+              if [[ "${{ github.event_name }}" == "release" ]]; then
+                echo "| Tag release as 'latest' | \`${TAG_LATEST_RESULT:-skipped}\` |"
+                echo "| Promote release to public | \`${PROMOTE_PUBLIC_RESULT:-skipped}\` (endpoints ok: ${promote_ok:-0}/2) |"
+              fi
+              echo
+              echo "Inspect the failing step's logs above for the cause."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
