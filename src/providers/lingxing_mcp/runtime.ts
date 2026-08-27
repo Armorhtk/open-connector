@@ -100,7 +100,10 @@ class LingxingRequestError extends ProviderRequestError {
   }
 }
 
-export const lingxingActionHandlers: ProviderActionHandlers<"lingxing", ProviderRuntimeHandler<LingxingContext>> = {
+export const lingxingMcpActionHandlers: ProviderActionHandlers<
+  "lingxing_mcp",
+  ProviderRuntimeHandler<LingxingContext>
+> = {
   list_tools(_input, context) {
     return listLingxingTools(context);
   },

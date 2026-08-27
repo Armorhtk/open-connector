@@ -3,7 +3,7 @@ import type { ActionDefinition } from "../../core/types.ts";
 import { s } from "../../core/json-schema.ts";
 import { defineProviderAction } from "../../core/provider-definition.ts";
 
-const service = "lingxing";
+const service = "lingxing_mcp";
 
 const toolAnnotationsSchema = s.looseObject("MCP hints supplied by Lingxing about the tool's behavior.", {
   title: s.optional(s.string("A human-readable title for the tool.")),
@@ -26,7 +26,7 @@ const mcpToolSummarySchema = s.object(
   { optional: ["description", "annotations"] },
 );
 
-export const lingxingActions: ActionDefinition[] = [
+export const lingxingMcpActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "list_tools",
     description:
@@ -38,7 +38,7 @@ export const lingxingActions: ActionDefinition[] = [
       },
       "The current Lingxing MCP tool catalog.",
     ),
-    followUpActions: ["lingxing.call_tool"],
+    followUpActions: ["lingxing_mcp.call_tool"],
   }),
   defineProviderAction(service, {
     name: "call_tool",
@@ -60,6 +60,6 @@ export const lingxingActions: ActionDefinition[] = [
       },
       "The normalized result returned by the Lingxing MCP tool.",
     ),
-    followUpActions: ["lingxing.list_tools"],
+    followUpActions: ["lingxing_mcp.list_tools"],
   }),
 ];

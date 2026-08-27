@@ -1,8 +1,8 @@
 import type { ProviderDefinition } from "../../core/types.ts";
 
-import { lingxingActions } from "./actions.ts";
+import { lingxingMcpActions } from "./actions.ts";
 
-const service = "lingxing";
+const service = "lingxing_mcp";
 
 export const provider: ProviderDefinition = {
   service,
@@ -42,5 +42,5 @@ export const provider: ProviderDefinition = {
     },
   ],
   homepageUrl: "https://www.lingxing.com/help/article/mcp",
-  actions: lingxingActions,
+  actions: lingxingMcpActions,
 };

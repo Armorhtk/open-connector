@@ -68,7 +68,6 @@ const scenarioByService = new Map<string, ProviderScenario>([
   ["helium10", "cross-border-ecommerce"],
   ["jumpseller", "cross-border-ecommerce"],
   ["linkfox", "cross-border-ecommerce"],
-  ["lingxing", "cross-border-ecommerce"],
   ["lingxingmcp", "cross-border-ecommerce"],
   ["mailchimp", "marketing"],
   ["mailgun", "communication"],

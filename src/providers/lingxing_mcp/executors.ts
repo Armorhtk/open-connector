@@ -3,16 +3,16 @@ import type { CredentialValidators, ExecutionContext, ProviderExecutors } from "
 import { createProviderFetch, defineProviderExecutors, requireCustomCredential } from "../provider-runtime.ts";
 import {
   createLingxingContext,
-  lingxingActionHandlers,
+  lingxingMcpActionHandlers,
   toLingxingExecutionError,
   validateLingxingCredential,
 } from "./runtime.ts";
 
-const service = "lingxing";
+const service = "lingxing_mcp";
 
 export const executors: ProviderExecutors = defineProviderExecutors({
   service,
-  handlers: lingxingActionHandlers,
+  handlers: lingxingMcpActionHandlers,
   mapError: toLingxingExecutionError,
   async createContext(context: ExecutionContext, fetcher: typeof fetch) {
     const credential = await requireCustomCredential(context, service);
