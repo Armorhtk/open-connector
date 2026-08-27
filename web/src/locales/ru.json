@@ -40,6 +40,7 @@
   "nav": {
     "overview": "Обзор",
     "providers": "Провайдеры",
+    "marketplace": "Marketplace",
     "oauthApps": "OAuth Apps",
     "actions": "Действия",
     "runs": "Запуски",
@@ -68,6 +69,7 @@
         "title": "Провайдеры",
         "subtitle": "Подключайте провайдеры и проверяйте их возможности."
       },
+      "marketplace": { "title": "Marketplace", "subtitle": "Configure managed provider actions." },
       "oauthApps": {
         "title": "OAuth Apps",
         "subtitle": "Управляйте OAuth App по умолчанию для каждого провайдера."
@@ -124,6 +126,59 @@
     "noRecentCallsTitle": "Недавних вызовов нет",
     "noRecentCallsDescription": "Запустите действие, чтобы увидеть вызовы по провайдерам."
   },
+  "marketplace": {
+    "summary": {
+      "title": "Connector Marketplace",
+      "id": "ID: {{id}}",
+      "description": "Управляемый доступ к провайдерам для этого Connector.",
+      "providers": "Провайдеры",
+      "actions": "Действия"
+    },
+    "status": {
+      "disabled": "Отключено",
+      "available": "Доступно",
+      "unavailable": "Недоступно",
+      "auth_error": "Ошибка аутентификации"
+    },
+    "pricing": { "free": "Бесплатно", "metered": "Оплата по использованию" },
+    "configuration": {
+      "title": "Настройка",
+      "description": "Подключите среду к endpoint обнаружения Marketplace.",
+      "configured": "Настроено",
+      "discoveryUrl": "URL обнаружения",
+      "discoveryHelp": "Connect загрузит и проверит документ при сохранении.",
+      "apiKey": "API-ключ",
+      "apiKeyPlaceholder": "Введите API-ключ Marketplace",
+      "keepCurrentKey": "Оставьте пустым, чтобы сохранить текущий ключ",
+      "apiKeyHelp": "Шифруется при наличии ключа шифрования среды.",
+      "showApiKey": "Показать API-ключ",
+      "hideApiKey": "Скрыть API-ключ",
+      "connect": "Подключить и проверить",
+      "revalidate": "Сохранить и проверить",
+      "remove": "Удалить конфигурацию",
+      "removeConfirmation": "Удалить подключение Marketplace?",
+      "confirmRemove": "Удалить"
+    },
+    "providers": {
+      "title": "Управляемые провайдеры",
+      "description": "Включите совместимые провайдеры, доступные как виртуальные подключения.",
+      "count": "Провайдеров: {{count}}",
+      "actionCount": "Действий в каталоге: {{count}}",
+      "enabled": "Включено",
+      "disabled": "Отключено",
+      "enable": "Включить",
+      "disable": "Отключить",
+      "emptyTitle": "Нет совместимых провайдеров",
+      "emptyDescription": "Подключите Marketplace с действиями, совпадающими с локальным каталогом."
+    },
+    "messages": {
+      "saved": "Конфигурация Marketplace сохранена и проверена.",
+      "saveFailed": "Не удалось сохранить конфигурацию Marketplace.",
+      "removed": "Конфигурация Marketplace удалена.",
+      "removeFailed": "Не удалось удалить конфигурацию Marketplace.",
+      "providerFailed": "Не удалось обновить настройку провайдера."
+    }
+  },
   "providers": {
     "catalogTitle": "Провайдеры",
     "viewLabel": "Представление провайдеров",
@@ -172,6 +227,12 @@
     "selectProviderTitle": "Выберите провайдера",
     "selectProviderDescription": "Выберите провайдера, чтобы проверить настройки подключения.",
     "connectedBy": "Подключено через {{authType}}",
+    "marketplaceBadge": "Управляемый",
+    "marketplaceConnection": {
+      "title": "Управляемое подключение Marketplace",
+      "description": "Действия могут использовать учетные данные под управлением {{name}}.",
+      "manage": "Управление Marketplace"
+    },
     "configuredBadge": "Настроено",
     "noSetupBadge": "Без настройки",
     "unconfiguredBadge": "Не подключено",

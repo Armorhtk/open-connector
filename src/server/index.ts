@@ -130,7 +130,7 @@ async function main(): Promise<void> {
         }
         if (!secretCodec.encrypted) {
           logger.warn(
-            "runtime data encryption is disabled; set OOMOL_CONNECT_ENCRYPTION_KEY to encrypt stored credentials, OAuth client configuration, pending OAuth state, and completed idempotent action responses",
+            "runtime data encryption is disabled; set OOMOL_CONNECT_ENCRYPTION_KEY to encrypt stored credentials, Marketplace API keys, OAuth client configuration, pending OAuth state, and completed idempotent action responses",
           );
         }
         if (!staticRoot) {

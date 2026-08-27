@@ -1,6 +1,11 @@
 import type { IConnectionStore, StoredConnection } from "../../connection-service.ts";
 import type { TokenPolicy } from "../../core/action-policy.ts";
 import type { ResolvedCredential, RuntimeLogger } from "../../core/types.ts";
+import type {
+  IMarketplaceStore,
+  ProviderPreference,
+  StoredMarketplaceConfig,
+} from "../../marketplace/marketplace-service.ts";
 import type { IOAuthClientConfigStore, OAuthClientConfig } from "../../oauth/oauth-client-config-service.ts";
 import type { IOAuthStateStore, OAuthAuthorizationState } from "../../oauth/oauth-flow-service.ts";
 import type { ISecretCodec } from "../secrets/secret-codec-core.ts";
@@ -40,6 +45,7 @@ export class PostgresRuntimeDatabase implements RuntimeDatabase {
   readonly runtimePolicyStore: IRuntimePolicyStore;
   readonly runLogStore: IRunLogStore;
   readonly idempotencyStore: IIdempotencyStore;
+  readonly marketplaceStore: IMarketplaceStore;
 
   private readonly pool: Pool;
   private readonly secretCodec: ISecretCodec;
@@ -54,6 +60,7 @@ export class PostgresRuntimeDatabase implements RuntimeDatabase {
     this.runtimePolicyStore = new PostgresRuntimePolicyStore(pool);
     this.runLogStore = new PostgresRunLogStore(pool, options.runLimit ?? DEFAULT_RUN_LIMIT);
     this.idempotencyStore = new PostgresIdempotencyStore(pool, this.secretCodec);
+    this.marketplaceStore = new PostgresMarketplaceStore(pool);
   }
 
   static async open(
@@ -93,6 +100,8 @@ export class PostgresRuntimeDatabase implements RuntimeDatabase {
         delete from runtime_policy;
         delete from runs;
         delete from idempotency_records;
+        delete from marketplace_config;
+        delete from provider_preferences;
       `);
     });
   }
@@ -159,7 +168,59 @@ export class PostgresRuntimeDatabase implements RuntimeDatabase {
           response.keyHash,
         ]);
       }
+
+      const marketplaceRows = await client.query<RuntimeRow>("select value from marketplace_config where id = 1");
+      const marketplaceRow = marketplaceRows.rows[0];
+      if (marketplaceRow) {
+        const config = parseJson<StoredMarketplaceConfig>(readString(marketplaceRow, "value"));
+        config.apiKeyEncrypted = await nextSecretCodec.encode(await this.secretCodec.decode(config.apiKeyEncrypted));
+        await client.query("update marketplace_config set value = $1 where id = 1", [JSON.stringify(config)]);
+      }
     });
+  }
+}
+
+class PostgresMarketplaceStore implements IMarketplaceStore {
+  private readonly pool: Pool;
+
+  constructor(pool: Pool) {
+    this.pool = pool;
+  }
+
+  async getConfig(): Promise<StoredMarketplaceConfig | undefined> {
+    const result = await this.pool.query<RuntimeRow>("select value from marketplace_config where id = 1");
+    const row = result.rows[0];
+    return row ? parseJson<StoredMarketplaceConfig>(readString(row, "value")) : undefined;
+  }
+
+  async setConfig(config: StoredMarketplaceConfig): Promise<void> {
+    await this.pool.query(
+      "insert into marketplace_config (id, value) values (1, $1) on conflict(id) do update set value = excluded.value",
+      [JSON.stringify(config)],
+    );
+  }
+
+  async deleteConfig(): Promise<void> {
+    await this.pool.query("delete from marketplace_config where id = 1");
+  }
+
+  async listProviderPreferences(): Promise<ProviderPreference[]> {
+    const result = await this.pool.query<RuntimeRow>(
+      "select service, enabled, created_at, updated_at from provider_preferences order by service",
+    );
+    return result.rows.map((row) => ({
+      service: readString(row, "service"),
+      enabled: row.enabled === true,
+      createdAt: readString(row, "created_at"),
+      updatedAt: readString(row, "updated_at"),
+    }));
+  }
+
+  async setProviderPreference(preference: ProviderPreference): Promise<void> {
+    await this.pool.query(
+      "insert into provider_preferences (service, enabled, created_at, updated_at) values ($1, $2, $3, $4) on conflict(service) do update set enabled = excluded.enabled, updated_at = excluded.updated_at",
+      [preference.service, preference.enabled, preference.createdAt, preference.updatedAt],
+    );
   }
 }
 

@@ -1,6 +1,11 @@
 import type { IConnectionStore, StoredConnection } from "../../connection-service.ts";
 import type { TokenPolicy } from "../../core/action-policy.ts";
 import type { ResolvedCredential, RuntimeLogger } from "../../core/types.ts";
+import type {
+  IMarketplaceStore,
+  ProviderPreference,
+  StoredMarketplaceConfig,
+} from "../../marketplace/marketplace-service.ts";
 import type { IOAuthClientConfigStore, OAuthClientConfig } from "../../oauth/oauth-client-config-service.ts";
 import type { IOAuthStateStore, OAuthAuthorizationState } from "../../oauth/oauth-flow-service.ts";
 import type { ISecretCodec } from "../secrets/secret-codec-core.ts";
@@ -74,6 +79,7 @@ export class SqliteRuntimeDatabase implements RuntimeDatabase {
   readonly runtimePolicyStore: SqliteRuntimePolicyStore;
   readonly runLogStore: SqliteRunLogStore;
   readonly idempotencyStore: SqliteIdempotencyStore;
+  readonly marketplaceStore: SqliteMarketplaceStore;
 
   private readonly database: DatabaseSync;
   private readonly secretCodec: ISecretCodec;
@@ -89,6 +95,7 @@ export class SqliteRuntimeDatabase implements RuntimeDatabase {
     this.runtimePolicyStore = new SqliteRuntimePolicyStore(this.database);
     this.runLogStore = new SqliteRunLogStore(this.database, options.runLimit ?? DEFAULT_RUN_LIMIT);
     this.idempotencyStore = new SqliteIdempotencyStore(this.database, this.secretCodec);
+    this.marketplaceStore = new SqliteMarketplaceStore(this.database);
   }
 
   close(): void {
@@ -105,11 +112,25 @@ export class SqliteRuntimeDatabase implements RuntimeDatabase {
     );
     const oauthStates = await readRotatedStateSecrets(this.database, this.secretCodec, nextSecretCodec);
     const idempotencyResponses = await readRotatedIdempotencySecrets(this.database, this.secretCodec, nextSecretCodec);
+    const marketplaceConfig = await this.marketplaceStore.getConfig();
+    const rotatedMarketplaceConfig = marketplaceConfig
+      ? {
+          ...marketplaceConfig,
+          apiKeyEncrypted: await nextSecretCodec.encode(
+            await this.secretCodec.decode(marketplaceConfig.apiKeyEncrypted),
+          ),
+        }
+      : undefined;
     runInTransaction(this.database, () => {
       writeRotatedConnectionSecrets(this.database, connections);
       writeRotatedServiceSecrets(this.database, "oauth_client_configs", oauthConfigs);
       writeRotatedStateSecrets(this.database, oauthStates);
       writeRotatedIdempotencySecrets(this.database, idempotencyResponses);
+      if (rotatedMarketplaceConfig) {
+        this.database
+          .prepare("update marketplace_config set value = ? where id = 1")
+          .run(JSON.stringify(rotatedMarketplaceConfig));
+      }
     });
   }
 
@@ -122,12 +143,59 @@ export class SqliteRuntimeDatabase implements RuntimeDatabase {
       delete from runtime_policy;
       delete from runs;
       delete from idempotency_records;
+      delete from marketplace_config;
+      delete from provider_preferences;
     `);
   }
 
   private initialize(logger?: RuntimeLogger): void {
     this.database.exec("pragma journal_mode = wal;");
     runSqliteMigrations(this.database, logger);
+  }
+}
+
+export class SqliteMarketplaceStore implements IMarketplaceStore {
+  private readonly database: DatabaseSync;
+
+  constructor(database: DatabaseSync) {
+    this.database = database;
+  }
+
+  async getConfig(): Promise<StoredMarketplaceConfig | undefined> {
+    const row = this.database.prepare("select value from marketplace_config where id = 1").get();
+    return row ? parseJson<StoredMarketplaceConfig>(readString(row, "value")) : undefined;
+  }
+
+  async setConfig(config: StoredMarketplaceConfig): Promise<void> {
+    this.database
+      .prepare(
+        "insert into marketplace_config (id, value) values (1, ?) on conflict(id) do update set value = excluded.value",
+      )
+      .run(JSON.stringify(config));
+  }
+
+  async deleteConfig(): Promise<void> {
+    this.database.prepare("delete from marketplace_config where id = 1").run();
+  }
+
+  async listProviderPreferences(): Promise<ProviderPreference[]> {
+    return this.database
+      .prepare("select service, enabled, created_at, updated_at from provider_preferences order by service")
+      .all()
+      .map((row) => ({
+        service: readString(row, "service"),
+        enabled: (row as Record<string, unknown>).enabled === 1,
+        createdAt: readString(row, "created_at"),
+        updatedAt: readString(row, "updated_at"),
+      }));
+  }
+
+  async setProviderPreference(preference: ProviderPreference): Promise<void> {
+    this.database
+      .prepare(
+        "insert into provider_preferences (service, enabled, created_at, updated_at) values (?, ?, ?, ?) on conflict(service) do update set enabled = excluded.enabled, updated_at = excluded.updated_at",
+      )
+      .run(preference.service, preference.enabled ? 1 : 0, preference.createdAt, preference.updatedAt);
   }
 }
 

@@ -40,6 +40,7 @@
   "nav": {
     "overview": "概要",
     "providers": "プロバイダー",
+    "marketplace": "Marketplace",
     "oauthApps": "OAuth Apps",
     "actions": "アクション",
     "runs": "実行履歴",
@@ -68,6 +69,7 @@
         "title": "プロバイダー",
         "subtitle": "プロバイダーを接続し、機能を確認します。"
       },
+      "marketplace": { "title": "Marketplace", "subtitle": "Configure managed provider actions." },
       "oauthApps": {
         "title": "OAuth Apps",
         "subtitle": "各プロバイダーのデフォルト OAuth App を管理します。"
@@ -124,6 +126,54 @@
     "noRecentCallsTitle": "最近の呼び出しはありません",
     "noRecentCallsDescription": "アクションを実行するとプロバイダー別の呼び出し数が表示されます。"
   },
+  "marketplace": {
+    "summary": {
+      "title": "Connector Marketplace",
+      "id": "ID: {{id}}",
+      "description": "この Connector ランタイム向けのマネージドプロバイダーアクセスです。",
+      "providers": "プロバイダー",
+      "actions": "アクション"
+    },
+    "status": { "disabled": "無効", "available": "利用可能", "unavailable": "利用不可", "auth_error": "認証エラー" },
+    "pricing": { "free": "無料", "metered": "従量課金" },
+    "configuration": {
+      "title": "接続設定",
+      "description": "このランタイムを Marketplace discovery endpoint に接続します。",
+      "configured": "設定済み",
+      "discoveryUrl": "Discovery URL",
+      "discoveryHelp": "保存時に discovery ドキュメントを取得して検証します。",
+      "apiKey": "API キー",
+      "apiKeyPlaceholder": "Marketplace API キーを入力",
+      "keepCurrentKey": "現在のキーを維持する場合は空欄",
+      "apiKeyHelp": "暗号化キーが設定されている場合は暗号化して保存されます。",
+      "showApiKey": "API キーを表示",
+      "hideApiKey": "API キーを非表示",
+      "connect": "接続して検証",
+      "revalidate": "保存して再検証",
+      "remove": "設定を削除",
+      "removeConfirmation": "Marketplace 接続を削除しますか？",
+      "confirmRemove": "削除"
+    },
+    "providers": {
+      "title": "マネージドプロバイダー",
+      "description": "仮想接続として公開される互換プロバイダーを有効にします。",
+      "count": "{{count}} プロバイダー",
+      "actionCount": "カタログに {{count}} アクション",
+      "enabled": "有効",
+      "disabled": "無効",
+      "enable": "有効化",
+      "disable": "無効化",
+      "emptyTitle": "互換プロバイダーがありません",
+      "emptyDescription": "ローカルカタログと一致するアクションを持つ Marketplace に接続してください。"
+    },
+    "messages": {
+      "saved": "Marketplace 設定を保存して検証しました。",
+      "saveFailed": "Marketplace 設定を保存できませんでした。",
+      "removed": "Marketplace 設定を削除しました。",
+      "removeFailed": "Marketplace 設定を削除できませんでした。",
+      "providerFailed": "プロバイダー設定を更新できませんでした。"
+    }
+  },
   "providers": {
     "catalogTitle": "プロバイダー",
     "viewLabel": "プロバイダー表示",
@@ -169,6 +219,12 @@
     "selectProviderTitle": "プロバイダーを選択",
     "selectProviderDescription": "接続設定を確認するプロバイダーを選択してください。",
     "connectedBy": "{{authType}} で接続済み",
+    "marketplaceBadge": "マネージド",
+    "marketplaceConnection": {
+      "title": "Marketplace マネージド接続",
+      "description": "{{name}} が管理する認証情報でアクションを実行できます。",
+      "manage": "Marketplace を管理"
+    },
     "configuredBadge": "設定済み",
     "noSetupBadge": "設定不要",
     "unconfiguredBadge": "未接続",

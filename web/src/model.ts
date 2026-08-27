@@ -100,6 +100,24 @@ export interface ConnectionRecord {
   metadata: Record<string, unknown>;
 }
 
+export interface MarketplaceState {
+  configured: boolean;
+  enabled: boolean;
+  discoveryUrl: string;
+  status: "disabled" | "available" | "unavailable" | "auth_error";
+  marketplace?: { version: 1; id: string; name: string; pricing: "free" | "metered" };
+  compatibleActionCount: number;
+  compatibleProviderCount: number;
+  error?: string;
+}
+
+export interface ProviderPreference {
+  service: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface OAuthConfig {
   service: string;
   configured: boolean;
@@ -205,6 +223,8 @@ export interface AppData {
   runtimePolicy?: RuntimePolicyState;
   runs: RunLog[];
   runsNextCursor?: string;
+  marketplace?: MarketplaceState;
+  providerPreferences?: ProviderPreference[];
 }
 
 export interface OverviewSummary {
@@ -223,6 +243,7 @@ export interface ProviderConnectionStatus {
   oauthClientRequired: boolean;
   connections: ConnectionRecord[];
   connection?: ConnectionRecord;
+  marketplaceConnection?: ConnectionRecord;
 }
 
 const firstProviderService = "fusion-api";
@@ -292,6 +313,7 @@ export const emptyData: AppData = {
     runtime: emptyPolicyRules(),
   },
   runs: [],
+  providerPreferences: [],
 };
 
 function emptyPolicyRules(): PolicyRules {
@@ -325,6 +347,7 @@ export function resolveProviderConnectionStatus(
   const noSetupRequired = isNoAuthOnlyProvider(provider);
   const serviceConnections = noSetupRequired ? [] : usableConnectionsForService(connections, provider.service);
   const connection = pickUsableCredentialConnection(serviceConnections);
+  const marketplaceConnection = serviceConnections.find((item) => item.authType === "marketplace");
   return {
     noSetupRequired,
     connected: connection != null,
@@ -332,6 +355,7 @@ export function resolveProviderConnectionStatus(
       connection == null && providerRequiresOAuth(provider) && !oauthClientConfigured(provider.service, oauthConfigs),
     connections: serviceConnections,
     connection,
+    marketplaceConnection,
   };
 }
 
@@ -353,7 +377,7 @@ function isUsableCredentialConnection(connection: ConnectionRecord | undefined):
   return (
     connection != null &&
     connection.authType !== "no_auth" &&
-    connection.virtual !== true &&
+    (connection.virtual !== true || connection.authType === "marketplace") &&
     connection.configured !== false
   );
 }

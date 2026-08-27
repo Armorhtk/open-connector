@@ -9,6 +9,7 @@ import type { RuntimeDatabase } from "./storage/runtime-database.ts";
 import type { Hono } from "hono";
 
 import { ConnectionService } from "../connection-service.ts";
+import { MarketplaceService } from "../marketplace/marketplace-service.ts";
 import { OAuthClientConfigService } from "../oauth/oauth-client-config-service.ts";
 import { OAuthCredentialRefreshService } from "../oauth/oauth-credential-refresh-service.ts";
 import { OAuthFlowService } from "../oauth/oauth-flow-service.ts";
@@ -41,6 +42,12 @@ export interface ConnectApp {
 }
 
 export async function createConnectApp(options: ConnectAppOptions): Promise<ConnectApp> {
+  const marketplace = new MarketplaceService({
+    catalog: options.catalog,
+    store: options.runtimeDatabase.marketplaceStore,
+    secretCodec: options.secretCodec,
+  });
+  await marketplace.initialize();
   const runtimeTokens = new RuntimeTokenService(options.runtimeDatabase.runtimeTokenStore, options.logger);
   const hasStoredRuntimeTokens = async (): Promise<boolean> => (await runtimeTokens.listTokens()).length > 0;
   const allowedCustomOAuth = new Set(options.allowedCustomOAuth);
@@ -58,6 +65,7 @@ export async function createConnectApp(options: ConnectAppOptions): Promise<Conn
     providerLoader: options.providerLoader,
     store: options.runtimeDatabase.connectionStore,
     logger: options.logger,
+    marketplace,
   });
   const actions = new ActionRunner({
     catalog: options.catalog,
@@ -67,6 +75,7 @@ export async function createConnectApp(options: ConnectAppOptions): Promise<Conn
     transitFiles: options.transitFiles,
     actionPolicy: options.actionPolicy,
     logger: options.logger,
+    marketplace,
   });
 
   return {
@@ -98,6 +107,7 @@ export async function createConnectApp(options: ConnectAppOptions): Promise<Conn
       },
       actionPolicy: options.actionPolicy,
       logger: options.logger,
+      marketplace,
       compressApiResponses: options.compressApiResponses,
     }).createApp(),
     runtimeAuthConfigured:

@@ -40,6 +40,7 @@
   "nav": {
     "overview": "總覽",
     "providers": "服務提供者",
+    "marketplace": "Marketplace",
     "oauthApps": "OAuth Apps",
     "actions": "動作",
     "runs": "執行記錄",
@@ -68,6 +69,7 @@
         "title": "服務提供者",
         "subtitle": "連線至服務提供者並檢視其功能。"
       },
+      "marketplace": { "title": "Marketplace", "subtitle": "設定託管 Provider Action。" },
       "oauthApps": {
         "title": "OAuth Apps",
         "subtitle": "管理各服務提供者預設使用的 OAuth App。"
@@ -124,6 +126,54 @@
     "noRecentCallsTitle": "沒有近期呼叫",
     "noRecentCallsDescription": "執行一個動作以查看服務提供者的呼叫次數。"
   },
+  "marketplace": {
+    "summary": {
+      "title": "Connector Marketplace",
+      "id": "ID：{{id}}",
+      "description": "為目前 Connector 執行環境提供託管的服務存取能力。",
+      "providers": "服務提供者",
+      "actions": "操作"
+    },
+    "status": { "disabled": "未啟用", "available": "可用", "unavailable": "不可用", "auth_error": "驗證失敗" },
+    "pricing": { "free": "免費", "metered": "按量計費" },
+    "configuration": {
+      "title": "連線設定",
+      "description": "將目前執行環境連線到一個 Marketplace discovery endpoint。",
+      "configured": "已設定",
+      "discoveryUrl": "Discovery URL",
+      "discoveryHelp": "儲存時會取得並驗證該 discovery 文件。",
+      "apiKey": "API Key",
+      "apiKeyPlaceholder": "輸入 Marketplace API Key",
+      "keepCurrentKey": "留空以保留目前的 Key",
+      "apiKeyHelp": "設定執行環境加密金鑰後，此值會加密儲存。",
+      "showApiKey": "顯示 API Key",
+      "hideApiKey": "隱藏 API Key",
+      "connect": "連線並驗證",
+      "revalidate": "儲存並重新驗證",
+      "remove": "移除設定",
+      "removeConfirmation": "確定移除 Marketplace 連線？",
+      "confirmRemove": "確認移除"
+    },
+    "providers": {
+      "title": "託管服務提供者",
+      "description": "啟用以虛擬連線形式提供的相容服務。",
+      "count": "{{count}} 個服務提供者",
+      "actionCount": "目錄中有 {{count}} 個操作",
+      "enabled": "已啟用",
+      "disabled": "已停用",
+      "enable": "啟用",
+      "disable": "停用",
+      "emptyTitle": "沒有相容的服務提供者",
+      "emptyDescription": "請連線 action ID 與目前執行環境目錄有交集的 Marketplace。"
+    },
+    "messages": {
+      "saved": "Marketplace 設定已儲存並通過驗證。",
+      "saveFailed": "無法儲存 Marketplace 設定。",
+      "removed": "Marketplace 設定已移除。",
+      "removeFailed": "無法移除 Marketplace 設定。",
+      "providerFailed": "無法更新服務提供者偏好。"
+    }
+  },
   "providers": {
     "catalogTitle": "服務提供者",
     "viewLabel": "服務提供者檢視",
@@ -166,6 +216,12 @@
     "selectProviderTitle": "選取服務提供者",
     "selectProviderDescription": "選取服務提供者以檢視連線設定。",
     "connectedBy": "透過 {{authType}} 連線",
+    "marketplaceBadge": "託管",
+    "marketplaceConnection": {
+      "title": "Marketplace 託管連線",
+      "description": "操作可使用由 {{name}} 託管的憑證執行。",
+      "manage": "管理 Marketplace"
+    },
     "configuredBadge": "已設定",
     "noSetupBadge": "無須設定",
     "unconfiguredBadge": "尚未連線",

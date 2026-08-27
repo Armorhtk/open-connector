@@ -2,6 +2,7 @@ import type { CatalogStore } from "../../catalog-store.ts";
 import type { ConnectionService, ConnectionSummary, ExecutionConnection } from "../../connection-service.ts";
 import type { ActionPolicyDecision, ActionPolicyService, ActionPolicySnapshot } from "../../core/action-policy.ts";
 import type { ExecutionContext, ExecutionResult, TransitFileWriter } from "../../core/types.ts";
+import type { MarketplaceService } from "../../marketplace/marketplace-service.ts";
 import type { IProviderLoader } from "../../providers/provider-loader.ts";
 import type { Logger } from "../logger.ts";
 import type { IRunLogStore, RunLog, RunLogCaller, RunLogListInput, RunLogPage } from "../storage/runtime-store.ts";
@@ -18,6 +19,7 @@ export interface ActionRunnerOptions {
   transitFiles?: TransitFileWriter;
   actionPolicy?: ActionPolicyService;
   logger?: Logger;
+  marketplace?: MarketplaceService;
 }
 
 export interface RunActionInput {
@@ -88,20 +90,31 @@ export class ActionRunner {
         if (connectionPolicy && !connectionPolicy.allowed) {
           policy = connectionPolicy;
           result = { ok: false, error: { code: policy.code, message: policy.message } };
+        } else if (summary?.authType === "marketplace" && !this.options.marketplace?.supportsAction(action.id)) {
+          result = {
+            ok: false,
+            error: {
+              code: "connection_not_found",
+              message: "The selected Marketplace connection does not support this action.",
+            },
+          };
         } else {
           connection = await this.options.connections.resolveForExecution(action.service, input.connectionName);
           input.signal?.throwIfAborted();
-          const executor = action.execution.locallyExecutable
-            ? await this.options.providerLoader.loadActionExecutor(
-                action.service,
-                action.id,
-                this.options.catalog.providers.find((provider) => provider.service === action.service)?.displayName,
-              )
-            : undefined;
+          const executor =
+            action.execution.locallyExecutable && !connection.marketplace
+              ? await this.options.providerLoader.loadActionExecutor(
+                  action.service,
+                  action.id,
+                  this.options.catalog.providers.find((provider) => provider.service === action.service)?.displayName,
+                )
+              : undefined;
           input.signal?.throwIfAborted();
           result = await executeProviderAction(
             action,
-            executor,
+            connection.marketplace
+              ? (actionInput) => this.options.marketplace!.execute(action.id, actionInput, input.signal)
+              : executor,
             input.input,
             this.createExecutionContext(connection.getCredential, input.signal),
           );

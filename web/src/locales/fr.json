@@ -40,6 +40,7 @@
   "nav": {
     "overview": "Vue d’ensemble",
     "providers": "Fournisseurs",
+    "marketplace": "Marketplace",
     "oauthApps": "Apps OAuth",
     "actions": "Actions",
     "runs": "Exécutions",
@@ -68,6 +69,7 @@
         "title": "Fournisseurs",
         "subtitle": "Connectez des fournisseurs et examinez leurs capacités."
       },
+      "marketplace": { "title": "Marketplace", "subtitle": "Configure managed provider actions." },
       "oauthApps": {
         "title": "Apps OAuth",
         "subtitle": "Gérez l’application OAuth par défaut de chaque fournisseur."
@@ -123,6 +125,59 @@
     "callCountMany": "{{count}} appels",
     "noRecentCallsTitle": "Aucun appel récent",
     "noRecentCallsDescription": "Exécutez une action pour voir les appels par fournisseur."
+  },
+  "marketplace": {
+    "summary": {
+      "title": "Connector Marketplace",
+      "id": "ID : {{id}}",
+      "description": "Accès géré aux fournisseurs pour cette instance Connector.",
+      "providers": "Fournisseurs",
+      "actions": "Actions"
+    },
+    "status": {
+      "disabled": "Désactivé",
+      "available": "Disponible",
+      "unavailable": "Indisponible",
+      "auth_error": "Erreur d’authentification"
+    },
+    "pricing": { "free": "Gratuit", "metered": "Usage mesuré" },
+    "configuration": {
+      "title": "Configuration",
+      "description": "Connectez cette instance à un endpoint de découverte Marketplace.",
+      "configured": "Configuré",
+      "discoveryUrl": "URL de découverte",
+      "discoveryHelp": "Connect récupère et valide ce document lors de l’enregistrement.",
+      "apiKey": "Clé API",
+      "apiKeyPlaceholder": "Saisissez une clé API Marketplace",
+      "keepCurrentKey": "Laisser vide pour conserver la clé actuelle",
+      "apiKeyHelp": "Chiffrée au repos lorsqu’une clé de chiffrement est configurée.",
+      "showApiKey": "Afficher la clé API",
+      "hideApiKey": "Masquer la clé API",
+      "connect": "Connecter et valider",
+      "revalidate": "Enregistrer et revalider",
+      "remove": "Supprimer la configuration",
+      "removeConfirmation": "Supprimer la connexion Marketplace ?",
+      "confirmRemove": "Supprimer"
+    },
+    "providers": {
+      "title": "Fournisseurs gérés",
+      "description": "Activez les fournisseurs compatibles exposés comme connexions virtuelles.",
+      "count": "{{count}} fournisseurs",
+      "actionCount": "{{count}} actions au catalogue",
+      "enabled": "Activé",
+      "disabled": "Désactivé",
+      "enable": "Activer",
+      "disable": "Désactiver",
+      "emptyTitle": "Aucun fournisseur compatible",
+      "emptyDescription": "Connectez un Marketplace dont les actions correspondent au catalogue local."
+    },
+    "messages": {
+      "saved": "Configuration Marketplace enregistrée et validée.",
+      "saveFailed": "Impossible d’enregistrer la configuration Marketplace.",
+      "removed": "Configuration Marketplace supprimée.",
+      "removeFailed": "Impossible de supprimer la configuration Marketplace.",
+      "providerFailed": "Impossible de mettre à jour le fournisseur."
+    }
   },
   "providers": {
     "catalogTitle": "Fournisseurs",
@@ -184,6 +239,12 @@
     "selectProviderTitle": "Sélectionner un fournisseur",
     "selectProviderDescription": "Choisissez un fournisseur pour inspecter les paramètres de connexion.",
     "connectedBy": "Connecté via {{authType}}",
+    "marketplaceBadge": "Géré",
+    "marketplaceConnection": {
+      "title": "Connexion Marketplace gérée",
+      "description": "Les actions peuvent utiliser les identifiants gérés par {{name}}.",
+      "manage": "Gérer Marketplace"
+    },
     "configuredBadge": "Configuré",
     "noSetupBadge": "Sans configuration",
     "unconfiguredBadge": "Non connecté",

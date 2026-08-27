@@ -2,6 +2,7 @@ import type { CatalogStore, RuntimeActionDefinition } from "../catalog-store.ts"
 import type { ConnectionService, ConnectionSummary } from "../connection-service.ts";
 import type { ActionPolicySnapshot } from "../core/action-policy.ts";
 import type { ActionSearchIndexProvider, ActionSearchResult } from "../core/action-search.ts";
+import type { MarketplaceConfigInput, MarketplaceService } from "../marketplace/marketplace-service.ts";
 import type { OAuthClientConfigInput } from "../oauth/oauth-client-config-service.ts";
 import type { IProviderLoader } from "../providers/provider-loader.ts";
 import type { LocalAuthOptions } from "./api/auth.ts";
@@ -22,6 +23,7 @@ import { ConnectionError, defaultConnectionName } from "../connection-service.ts
 import { ActionPolicyService, emptyPolicyRules } from "../core/action-policy.ts";
 import { DEFAULT_ACTION_SEARCH_LIMIT, createActionSearchIndexProvider, searchActions } from "../core/action-search.ts";
 import { optionalRecord, optionalString, requiredString, requiredStringArray } from "../core/cast.ts";
+import { MarketplaceError } from "../marketplace/marketplace-service.ts";
 import { createMcpServer, listMcpToolSummaries } from "../mcp.ts";
 import { OAuthClientConfigError, OAuthClientConfigService } from "../oauth/oauth-client-config-service.ts";
 import { OAuthFlowError, OAuthFlowService } from "../oauth/oauth-flow-service.ts";
@@ -80,6 +82,7 @@ export interface IConnectServerOptions {
   registerStaticRoutes?: (app: Hono) => void;
   logger?: Logger;
   compressApiResponses?: boolean;
+  marketplace?: MarketplaceService;
 }
 
 /**
@@ -132,6 +135,18 @@ export class ConnectServer {
       app.use("/api/*", compress());
     }
     app.use("*", createLocalAuthMiddleware(auth));
+    if (this.options.marketplace) {
+      app.get("/api/marketplace", (context) => context.json(this.options.marketplace!.getState()));
+      app.put("/api/marketplace", (context) => this.configureMarketplace(context));
+      app.patch("/api/marketplace", (context) => this.configureMarketplace(context));
+      app.delete("/api/marketplace", (context) => this.deleteMarketplace(context));
+      app.get("/api/provider-preferences", async (context) =>
+        context.json(await this.options.marketplace!.listProviderPreferences()),
+      );
+      app.patch("/api/provider-preferences/:service", (context) =>
+        this.updateProviderPreference(context, context.req.param("service")),
+      );
+    }
     app.get("/v1/health", (context) => writeRuntimeSuccess(context, { ok: true, runtime: "oomol-connect" }));
     app.get("/v1/providers", (context) => this.listRuntimeProviders(context));
     app.get("/v1/actions", (context) => this.listRuntimeActions(context));
@@ -248,6 +263,41 @@ export class ConnectServer {
       return context.body(null, 304);
     }
     return context.body(providerSummariesJson, 200, { "Content-Type": "application/json" });
+  }
+
+  private async configureMarketplace(context: Context): Promise<Response> {
+    const body = await readJsonBody(context);
+    const input: MarketplaceConfigInput = {
+      discoveryUrl: optionalString(body.discoveryUrl),
+      apiKey: optionalString(body.apiKey),
+      enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
+    };
+    try {
+      return context.json(await this.options.marketplace!.configure(input));
+    } catch (error) {
+      if (error instanceof MarketplaceError) {
+        return jsonError(context, error.status === 404 ? 404 : 400, error.code, error.message);
+      }
+      throw error;
+    }
+  }
+
+  private async deleteMarketplace(context: Context): Promise<Response> {
+    await this.options.marketplace!.remove();
+    return context.json(this.options.marketplace!.getState());
+  }
+
+  private async updateProviderPreference(context: Context, service: string): Promise<Response> {
+    const body = await readJsonBody(context);
+    if (typeof body.enabled !== "boolean") {
+      return jsonError(context, 400, "invalid_input", "enabled must be a boolean.");
+    }
+    try {
+      return context.json(await this.options.marketplace!.setProviderEnabled(service, body.enabled));
+    } catch (error) {
+      if (error instanceof MarketplaceError) return jsonError(context, 404, error.code, error.message);
+      throw error;
+    }
   }
 
   private getProvider(context: Context, service: string): Response {

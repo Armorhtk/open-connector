@@ -289,6 +289,30 @@ describe("resolveProviderConnectionStatus", () => {
 
     expect(status.connections.map((connection) => connection.connectionName)).toEqual(["work"]);
   });
+
+  it("treats an enabled Marketplace virtual connection as a managed provider connection", () => {
+    const status = resolveProviderConnectionStatus(
+      oauthProvider("slack", "Slack"),
+      [
+        {
+          id: "marketplace:community:slack",
+          service: "slack",
+          connectionName: "marketplace_community",
+          authType: "marketplace",
+          configured: true,
+          virtual: true,
+          default: true,
+          metadata: {},
+        },
+      ],
+      [],
+    );
+
+    expect(status).toMatchObject({
+      connected: true,
+      marketplaceConnection: { id: "marketplace:community:slack" },
+    });
+  });
 });
 
 const emptyAppData: AppData = {

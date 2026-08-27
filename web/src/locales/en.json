@@ -40,6 +40,7 @@
   "nav": {
     "overview": "Overview",
     "providers": "Providers",
+    "marketplace": "Marketplace",
     "oauthApps": "OAuth Apps",
     "actions": "Actions",
     "runs": "Runs",
@@ -68,6 +69,7 @@
         "title": "Providers",
         "subtitle": "Connect providers and review provider capabilities."
       },
+      "marketplace": { "title": "Marketplace", "subtitle": "Configure managed provider actions." },
       "oauthApps": {
         "title": "OAuth Apps",
         "subtitle": "Manage the default OAuth app for each provider."
@@ -124,6 +126,59 @@
     "noRecentCallsTitle": "No recent calls",
     "noRecentCallsDescription": "Run an action to see provider call counts."
   },
+  "marketplace": {
+    "summary": {
+      "title": "Connector Marketplace",
+      "id": "ID: {{id}}",
+      "description": "Managed provider access for this Connector runtime.",
+      "providers": "Providers",
+      "actions": "Actions"
+    },
+    "status": {
+      "disabled": "Disabled",
+      "available": "Available",
+      "unavailable": "Unavailable",
+      "auth_error": "Authentication error"
+    },
+    "pricing": { "free": "Free", "metered": "Metered usage" },
+    "configuration": {
+      "title": "Configuration",
+      "description": "Connect this runtime to one Marketplace discovery endpoint.",
+      "configured": "Configured",
+      "discoveryUrl": "Discovery URL",
+      "discoveryHelp": "Connect fetches and validates this document when you save.",
+      "apiKey": "API key",
+      "apiKeyPlaceholder": "Enter a Marketplace API key",
+      "keepCurrentKey": "Leave blank to keep the current key",
+      "apiKeyHelp": "Stored with runtime encryption when an encryption key is configured.",
+      "showApiKey": "Show API key",
+      "hideApiKey": "Hide API key",
+      "connect": "Connect and validate",
+      "revalidate": "Save and revalidate",
+      "remove": "Remove configuration",
+      "removeConfirmation": "Remove the Marketplace connection?",
+      "confirmRemove": "Remove"
+    },
+    "providers": {
+      "title": "Managed providers",
+      "description": "Enable the compatible providers exposed as virtual connections.",
+      "count": "{{count}} providers",
+      "actionCount": "{{count}} catalog actions",
+      "enabled": "Enabled",
+      "disabled": "Disabled",
+      "enable": "Enable",
+      "disable": "Disable",
+      "emptyTitle": "No compatible providers",
+      "emptyDescription": "Connect a Marketplace whose action IDs overlap this runtime catalog."
+    },
+    "messages": {
+      "saved": "Marketplace configuration saved and validated.",
+      "saveFailed": "Could not save the Marketplace configuration.",
+      "removed": "Marketplace configuration removed.",
+      "removeFailed": "Could not remove the Marketplace configuration.",
+      "providerFailed": "Could not update the provider preference."
+    }
+  },
   "providers": {
     "catalogTitle": "Providers",
     "viewLabel": "Provider view",
@@ -178,6 +233,12 @@
     "selectProviderTitle": "Select a provider",
     "selectProviderDescription": "Choose a provider to inspect connection settings.",
     "connectedBy": "Connected by {{authType}}",
+    "marketplaceBadge": "Managed",
+    "marketplaceConnection": {
+      "title": "Managed Marketplace connection",
+      "description": "Actions can run with credentials managed by {{name}}.",
+      "manage": "Manage Marketplace"
+    },
     "configuredBadge": "Configured",
     "noSetupBadge": "No setup",
     "unconfiguredBadge": "Not connected",

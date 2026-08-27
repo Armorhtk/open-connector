@@ -11,6 +11,7 @@ import type {
   ResolvedCredential,
   RuntimeLogger,
 } from "./core/types.ts";
+import type { MarketplacePricing, MarketplaceService } from "./marketplace/marketplace-service.ts";
 import type { IOAuthCredentialRefresher } from "./oauth/oauth-credential-refresh-service.ts";
 import type { IProviderLoader } from "./providers/provider-loader.ts";
 
@@ -27,11 +28,12 @@ export interface ConnectionSummary {
   id: string;
   service: string;
   connectionName: string;
-  authType: AuthType;
+  authType: AuthType | "marketplace";
   configured: boolean;
   virtual: boolean;
   default: boolean;
   profile: CredentialProfile;
+  marketplace?: { id: string; pricing: MarketplacePricing };
 }
 
 /**
@@ -53,6 +55,7 @@ export interface ConnectionServiceOptions {
   providerLoader: IProviderLoader;
   store: IConnectionStore;
   logger?: RuntimeLogger;
+  marketplace?: MarketplaceService;
 }
 
 export interface StoredConnection {
@@ -71,6 +74,7 @@ export interface DisconnectedConnectionSummary {
 
 export interface ExecutionConnection {
   summary?: ConnectionSummary;
+  marketplace?: boolean;
   getCredential(service: string): Promise<ResolvedCredential | undefined>;
 }
 
@@ -126,6 +130,7 @@ export class ConnectionService {
   private readonly providerLoader: IProviderLoader;
   private readonly store: IConnectionStore;
   private readonly logger?: RuntimeLogger;
+  private readonly marketplace?: MarketplaceService;
 
   constructor(input: ConnectionServiceOptions) {
     this.catalog = input.catalog;
@@ -133,6 +138,7 @@ export class ConnectionService {
     this.providerLoader = input.providerLoader;
     this.store = input.store;
     this.logger = input.logger;
+    this.marketplace = input.marketplace;
   }
 
   async listConnections(): Promise<ConnectionSummary[]> {
@@ -148,10 +154,13 @@ export class ConnectionService {
       configuredByService.set(connection.service, serviceConnections);
     }
 
+    const preferences = new Map(
+      ((await this.marketplace?.listProviderPreferences()) ?? []).map((item) => [item.service, item.enabled]),
+    );
     return this.catalog.providers.flatMap((provider) => {
       const connections = configuredByService.get(provider.service) ?? [];
       if (connections.length > 0) {
-        return connections.map((connection) =>
+        const stored = connections.map((connection) =>
           this.createConfiguredConnectionSummary(
             provider,
             connection.id,
@@ -159,19 +168,28 @@ export class ConnectionService {
             connection.credential,
           ),
         );
+        const marketplace = this.createMarketplaceConnectionSummary(provider, preferences);
+        return marketplace ? [...stored, marketplace] : stored;
       }
 
-      return this.supportsAuth(provider, "no_auth")
-        ? [this.createNoAuthConnectionSummary(provider, defaultConnectionName)]
-        : [];
+      const marketplace = this.createMarketplaceConnectionSummary(provider, preferences, true);
+      if (this.supportsAuth(provider, "no_auth")) {
+        const noAuth = this.createNoAuthConnectionSummary(provider, defaultConnectionName);
+        const secondaryMarketplace = this.createMarketplaceConnectionSummary(provider, preferences);
+        return secondaryMarketplace ? [noAuth, secondaryMarketplace] : [noAuth];
+      }
+      return marketplace ? [marketplace] : [];
     });
   }
 
   async listConnectionsByService(service: string): Promise<ConnectionSummary[]> {
     const provider = this.getProvider(service);
     const connections = (await this.store.list()).filter((connection) => connection.service === service);
+    const preferences = new Map(
+      ((await this.marketplace?.listProviderPreferences()) ?? []).map((item) => [item.service, item.enabled]),
+    );
     if (connections.length > 0) {
-      return connections.map((connection) =>
+      const stored = connections.map((connection) =>
         this.createConfiguredConnectionSummary(
           provider,
           connection.id,
@@ -179,11 +197,17 @@ export class ConnectionService {
           connection.credential,
         ),
       );
+      const marketplace = this.createMarketplaceConnectionSummary(provider, preferences);
+      return marketplace ? [...stored, marketplace] : stored;
     }
 
-    return this.supportsAuth(provider, "no_auth")
-      ? [this.createNoAuthConnectionSummary(provider, defaultConnectionName)]
-      : [];
+    const marketplace = this.createMarketplaceConnectionSummary(provider, preferences, true);
+    if (this.supportsAuth(provider, "no_auth")) {
+      const noAuth = this.createNoAuthConnectionSummary(provider, defaultConnectionName);
+      const secondaryMarketplace = this.createMarketplaceConnectionSummary(provider, preferences);
+      return secondaryMarketplace ? [noAuth, secondaryMarketplace] : [noAuth];
+    }
+    return marketplace ? [marketplace] : [];
   }
 
   async listAuthenticatedServices(services: string[]): Promise<string[]> {
@@ -193,6 +217,12 @@ export class ConnectionService {
         .filter((connection) => connection.credential.authType !== "no_auth")
         .map((connection) => connection.service),
     );
+    const preferences = new Map(
+      ((await this.marketplace?.listProviderPreferences()) ?? []).map((item) => [item.service, item.enabled]),
+    );
+    for (const service of this.marketplace?.getSnapshot()?.actionsByService.keys() ?? []) {
+      if (preferences.get(service) === true) authenticated.add(service);
+    }
     return services.filter((service) => authenticated.has(service));
   }
 
@@ -200,6 +230,8 @@ export class ConnectionService {
     const provider = this.getProvider(service);
     const name = normalizeConnectionName(connectionName);
     const stored = await this.store.get(service, name);
+    const marketplace = await this.resolveMarketplaceSummary(provider, connectionName, Boolean(stored));
+    if (marketplace) return marketplace;
     if (!stored && connectionName && !this.supportsAuth(provider, "no_auth")) {
       throw new ConnectionError("connection_not_found", `${service} connection not found: ${name}.`);
     }
@@ -215,6 +247,8 @@ export class ConnectionService {
     const provider = this.getProvider(service);
     const name = normalizeConnectionName(connectionName);
     const stored = await this.store.get(service, name);
+    const marketplace = await this.resolveMarketplaceSummary(provider, connectionName, Boolean(stored));
+    if (marketplace) return { summary: marketplace, marketplace: true, getCredential: async () => undefined };
     if (!stored && connectionName && !this.supportsAuth(provider, "no_auth")) {
       throw new ConnectionError("connection_not_found", `${service} connection not found: ${name}.`);
     }
@@ -419,6 +453,47 @@ export class ConnectionService {
       virtual: true,
       default: connectionName === defaultConnectionName,
       profile: this.createNoAuthProfile(provider),
+    };
+  }
+
+  private async resolveMarketplaceSummary(
+    provider: RuntimeProviderDefinition,
+    connectionName: string | undefined,
+    hasStoredSelection: boolean,
+  ): Promise<ConnectionSummary | undefined> {
+    const marketplaceId = this.marketplace?.getSnapshot()?.definition.id;
+    if (connectionName && connectionName !== (marketplaceId ? `marketplace_${marketplaceId}` : undefined)) {
+      return undefined;
+    }
+    if (!connectionName && (hasStoredSelection || this.supportsAuth(provider, "no_auth"))) return undefined;
+    const preferences = new Map(
+      ((await this.marketplace?.listProviderPreferences()) ?? []).map((item) => [item.service, item.enabled]),
+    );
+    return this.createMarketplaceConnectionSummary(provider, preferences, !connectionName);
+  }
+
+  private createMarketplaceConnectionSummary(
+    provider: ProviderDefinition,
+    preferences: ReadonlyMap<string, boolean>,
+    isDefault = false,
+  ): ConnectionSummary | undefined {
+    const snapshot = this.marketplace?.getSnapshot();
+    if (!snapshot?.actionsByService.has(provider.service) || preferences.get(provider.service) !== true)
+      return undefined;
+    return {
+      id: `marketplace:${snapshot.definition.id}:${provider.service}`,
+      service: provider.service,
+      connectionName: `marketplace_${snapshot.definition.id}`,
+      authType: "marketplace",
+      configured: true,
+      virtual: true,
+      default: isDefault,
+      profile: {
+        accountId: `marketplace:${snapshot.definition.id}:${provider.service}`,
+        displayName: snapshot.definition.name,
+        grantedScopes: [],
+      },
+      marketplace: { id: snapshot.definition.id, pricing: snapshot.definition.pricing },
     };
   }
 

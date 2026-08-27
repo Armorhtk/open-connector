@@ -40,6 +40,7 @@
   "nav": {
     "overview": "概览",
     "providers": "提供商",
+    "marketplace": "Marketplace",
     "oauthApps": "OAuth Apps",
     "actions": "操作",
     "runs": "运行记录",
@@ -68,6 +69,7 @@
         "title": "提供商",
         "subtitle": "连接提供商并查看能力配置。"
       },
+      "marketplace": { "title": "Marketplace", "subtitle": "配置托管 Provider Action。" },
       "oauthApps": {
         "title": "OAuth Apps",
         "subtitle": "管理各提供商默认使用的 OAuth App。"
@@ -124,6 +126,54 @@
     "noRecentCallsTitle": "暂无最近调用",
     "noRecentCallsDescription": "运行一个操作后会显示提供商调用次数。"
   },
+  "marketplace": {
+    "summary": {
+      "title": "Connector Marketplace",
+      "id": "ID：{{id}}",
+      "description": "为当前 Connector 运行时提供托管的服务访问能力。",
+      "providers": "提供商",
+      "actions": "操作"
+    },
+    "status": { "disabled": "未启用", "available": "可用", "unavailable": "不可用", "auth_error": "鉴权失败" },
+    "pricing": { "free": "免费", "metered": "按量计费" },
+    "configuration": {
+      "title": "连接配置",
+      "description": "将当前运行时连接到一个 Marketplace discovery endpoint。",
+      "configured": "已配置",
+      "discoveryUrl": "Discovery URL",
+      "discoveryHelp": "保存时会获取并验证该 discovery 文档。",
+      "apiKey": "API Key",
+      "apiKeyPlaceholder": "输入 Marketplace API Key",
+      "keepCurrentKey": "留空以保留当前 Key",
+      "apiKeyHelp": "配置运行时加密密钥后，该值会加密存储。",
+      "showApiKey": "显示 API Key",
+      "hideApiKey": "隐藏 API Key",
+      "connect": "连接并验证",
+      "revalidate": "保存并重新验证",
+      "remove": "移除配置",
+      "removeConfirmation": "确定移除 Marketplace 连接？",
+      "confirmRemove": "确认移除"
+    },
+    "providers": {
+      "title": "托管提供商",
+      "description": "启用以虚拟连接形式提供的兼容服务。",
+      "count": "{{count}} 个提供商",
+      "actionCount": "目录中有 {{count}} 个操作",
+      "enabled": "已启用",
+      "disabled": "已停用",
+      "enable": "启用",
+      "disable": "停用",
+      "emptyTitle": "没有兼容的提供商",
+      "emptyDescription": "请连接 action ID 与当前运行时目录有交集的 Marketplace。"
+    },
+    "messages": {
+      "saved": "Marketplace 配置已保存并通过验证。",
+      "saveFailed": "无法保存 Marketplace 配置。",
+      "removed": "Marketplace 配置已移除。",
+      "removeFailed": "无法移除 Marketplace 配置。",
+      "providerFailed": "无法更新提供商偏好。"
+    }
+  },
   "providers": {
     "catalogTitle": "提供商",
     "viewLabel": "提供商视图",
@@ -166,6 +216,12 @@
     "selectProviderTitle": "选择提供商",
     "selectProviderDescription": "选择一个提供商来查看连接设置。",
     "connectedBy": "通过 {{authType}} 连接",
+    "marketplaceBadge": "托管",
+    "marketplaceConnection": {
+      "title": "Marketplace 托管连接",
+      "description": "操作可使用由 {{name}} 托管的凭证运行。",
+      "manage": "管理 Marketplace"
+    },
     "configuredBadge": "已配置",
     "noSetupBadge": "无需设置",
     "unconfiguredBadge": "未连接",

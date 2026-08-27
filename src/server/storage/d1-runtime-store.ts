@@ -1,6 +1,11 @@
 import type { IConnectionStore, StoredConnection } from "../../connection-service.ts";
 import type { TokenPolicy } from "../../core/action-policy.ts";
 import type { ResolvedCredential } from "../../core/types.ts";
+import type {
+  IMarketplaceStore,
+  ProviderPreference,
+  StoredMarketplaceConfig,
+} from "../../marketplace/marketplace-service.ts";
 import type { IOAuthClientConfigStore, OAuthClientConfig } from "../../oauth/oauth-client-config-service.ts";
 import type { IOAuthStateStore, OAuthAuthorizationState } from "../../oauth/oauth-flow-service.ts";
 import type { D1DatabaseBinding } from "../cloudflare/cloudflare-bindings.ts";
@@ -36,6 +41,7 @@ export class D1RuntimeDatabase implements RuntimeDatabase {
   readonly runtimePolicyStore: D1RuntimePolicyStore;
   readonly runLogStore: D1RunLogStore;
   readonly idempotencyStore: D1IdempotencyStore;
+  readonly marketplaceStore: IMarketplaceStore;
 
   constructor(database: D1DatabaseBinding, options: D1RuntimeDatabaseOptions = {}) {
     const secretCodec = options.secretCodec ?? new PlainTextSecretCodec();
@@ -46,6 +52,54 @@ export class D1RuntimeDatabase implements RuntimeDatabase {
     this.runtimePolicyStore = new D1RuntimePolicyStore(database);
     this.runLogStore = new D1RunLogStore(database, options.runLimit ?? DEFAULT_RUN_LIMIT);
     this.idempotencyStore = new D1IdempotencyStore(database, secretCodec);
+    this.marketplaceStore = new D1MarketplaceStore(database);
+  }
+}
+
+class D1MarketplaceStore implements IMarketplaceStore {
+  private readonly database: D1DatabaseBinding;
+
+  constructor(database: D1DatabaseBinding) {
+    this.database = database;
+  }
+
+  async getConfig(): Promise<StoredMarketplaceConfig | undefined> {
+    const row = await this.database.prepare("select value from marketplace_config where id = 1").first<RuntimeRow>();
+    return row ? parseJson<StoredMarketplaceConfig>(readString(row, "value")) : undefined;
+  }
+
+  async setConfig(config: StoredMarketplaceConfig): Promise<void> {
+    await this.database
+      .prepare(
+        "insert into marketplace_config (id, value) values (1, ?) on conflict(id) do update set value = excluded.value",
+      )
+      .bind(JSON.stringify(config))
+      .run();
+  }
+
+  async deleteConfig(): Promise<void> {
+    await this.database.prepare("delete from marketplace_config where id = 1").run();
+  }
+
+  async listProviderPreferences(): Promise<ProviderPreference[]> {
+    const { results } = await this.database
+      .prepare("select service, enabled, created_at, updated_at from provider_preferences order by service")
+      .all<RuntimeRow>();
+    return results.map((row) => ({
+      service: readString(row, "service"),
+      enabled: row.enabled === 1,
+      createdAt: readString(row, "created_at"),
+      updatedAt: readString(row, "updated_at"),
+    }));
+  }
+
+  async setProviderPreference(preference: ProviderPreference): Promise<void> {
+    await this.database
+      .prepare(
+        "insert into provider_preferences (service, enabled, created_at, updated_at) values (?, ?, ?, ?) on conflict(service) do update set enabled = excluded.enabled, updated_at = excluded.updated_at",
+      )
+      .bind(preference.service, preference.enabled ? 1 : 0, preference.createdAt, preference.updatedAt)
+      .run();
   }
 }
 
