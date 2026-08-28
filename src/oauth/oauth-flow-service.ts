@@ -55,6 +55,7 @@ export interface OAuthFlowServiceOptions {
  * Storage contract for pending OAuth authorization states.
  */
 export interface IOAuthStateStore {
+  /** Deletes states whose creation timestamp is earlier than the cutoff. */
   deleteCreatedBefore(cutoff: string): Promise<void>;
   set(state: OAuthAuthorizationState): Promise<void>;
   take(state: string): Promise<OAuthAuthorizationState | undefined>;

@@ -459,7 +459,7 @@ function parseKoboToolboxExportHandle(value: string) {
       if (assetUid && exportId) return { assetUid, exportId };
     }
   } catch {
-    // 下方统一返回 handle 错误。
+    // Report all malformed handles with the same error below.
   }
   throw new ProviderRequestError(400, "exportHandle must be returned by start_export");
 }

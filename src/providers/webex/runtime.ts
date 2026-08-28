@@ -298,7 +298,7 @@ async function mapWebexError(response: Response) {
   try {
     payload = asOptionalObject(await response.json()) ?? {};
   } catch {
-    // Webex 的部分错误响应没有 JSON body，保留 HTTP 状态映射。
+    // Some Webex error responses have no JSON body, so preserve the HTTP status mapping.
   }
   const message =
     asOptionalString(payload.message) ??

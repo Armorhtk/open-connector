@@ -229,7 +229,7 @@ export const surveyMonkeyActionHandlers: Record<string, SurveyMonkeyActionHandle
   async create_contact(input, context) {
     const email = readOptionalString(input.email);
     const phoneNumber = readOptionalString(input.phoneNumber);
-    // schema 负责公开 action 输入校验；这里保留防御，避免直接调用 handler 时绕过业务约束。
+    // Keep this guard for direct handler calls that bypass the public action schema.
     if (!email && !phoneNumber) {
       throw new ProviderRequestError(400, "at least one of email or phoneNumber is required");
     }
@@ -413,7 +413,7 @@ function normalizeSurveyRollups(payload: unknown) {
     if (!dataRecord) {
       throw new ProviderRequestError(502, "SurveyMonkey rollups response is missing data");
     }
-    // 兼容以 question id 为键、rollup 对象为值的响应形态。
+    // Support responses keyed by question ID with rollup objects as values.
     items = "id" in dataRecord || "summary" in dataRecord ? [dataRecord] : Object.values(dataRecord);
   }
   const rollups = items.map((item) => {
