@@ -21,12 +21,6 @@ const paypalApiBaseUrls = {
 
 const paypalRequestTimeoutMs = 30_000;
 
-class PayPalError extends ProviderRequestError {
-  constructor(_code: string, message: string, status: number, _cause?: unknown, details?: unknown) {
-    super(status, message, details);
-  }
-}
-
 type PayPalRequestPhase = "validate" | "execute";
 
 type PayPalCredentialContext = {
@@ -298,7 +292,7 @@ export async function createPayPalActionContext(
   const context = resolvePayPalCredential(values, fetcher);
   const token = await exchangePayPalAccessToken(context, "execute");
   const accessToken = optionalString(token.access_token);
-  if (!accessToken) throw new PayPalError("provider_error", "PayPal access token is missing", 502);
+  if (!accessToken) throw new ProviderRequestError(502, "PayPal access token is missing");
   return { ...context, accessToken };
 }
 
@@ -307,7 +301,7 @@ function resolvePayPalEnvironment(value: unknown): PayPalEnvironment {
   if (environment === "sandbox" || environment === "live") {
     return environment;
   }
-  throw new PayPalError("invalid_input", "environment must be sandbox or live", 400);
+  throw new ProviderRequestError(400, "environment must be sandbox or live");
 }
 
 export function createPayPalAccessTokenRequest(input: {
@@ -352,7 +346,7 @@ async function exchangePayPalAccessToken(input: PayPalCredentialContext, phase: 
   }
   const token = optionalRecord(payload) as PayPalAccessTokenPayload | undefined;
   if (!optionalString(token?.access_token)) {
-    throw new PayPalError("provider_error", "PayPal access token is missing", 502);
+    throw new ProviderRequestError(502, "PayPal access token is missing");
   }
   return token ?? {};
 }
@@ -399,7 +393,7 @@ async function fetchPayPalPayload(fetcher: typeof fetch, url: string | URL, init
     return { response, payload: await readPayPalPayload(response) };
   } catch (error) {
     if (timeout.didTimeout()) {
-      throw new PayPalError("provider_error", "PayPal request timed out", 504);
+      throw new ProviderRequestError(504, "PayPal request timed out");
     }
     throw error;
   } finally {
@@ -419,10 +413,9 @@ async function readPayPalPayload(response: Response) {
     return JSON.parse(text) as unknown;
   } catch (error) {
     if (response.ok) {
-      throw new PayPalError(
-        "provider_error",
-        error instanceof Error ? `PayPal returned malformed JSON: ${error.message}` : "PayPal returned malformed JSON",
+      throw new ProviderRequestError(
         502,
+        error instanceof Error ? `PayPal returned malformed JSON: ${error.message}` : "PayPal returned malformed JSON",
       );
     }
     return text;
@@ -437,21 +430,21 @@ function createPayPalError(response: Response, payload: unknown, phase: PayPalRe
   const data = debugId || details ? { ...(debugId ? { debugId } : {}), ...(details ? { details } : {}) } : undefined;
 
   if (response.status === 429) {
-    return new PayPalError("rate_limited", message, 429, undefined, data);
+    return new ProviderRequestError(429, message, data);
   }
   if (phase === "validate" && [400, 401, 403].includes(response.status)) {
-    return new PayPalError("invalid_input", message, 400, undefined, data);
+    return new ProviderRequestError(400, message, data);
   }
   if (phase === "execute" && response.status === 401) {
-    return new PayPalError("credential_expired", message, 409, undefined, data);
+    return new ProviderRequestError(409, message, data);
   }
   if (phase === "execute" && response.status === 403) {
-    return new PayPalError("scope_missing", message, 403, undefined, data);
+    return new ProviderRequestError(403, message, data);
   }
   if (phase === "execute" && [400, 404, 409, 422].includes(response.status)) {
-    return new PayPalError("invalid_input", message, 400, undefined, data);
+    return new ProviderRequestError(400, message, data);
   }
-  return new PayPalError("provider_error", message, response.status || 500, undefined, data);
+  return new ProviderRequestError(response.status || 500, message, data);
 }
 
 function extractPayPalErrorMessage(payload: unknown, fallback: string) {
@@ -612,7 +605,7 @@ function buildUpdateTrackingBody(input: Record<string, unknown>) {
     patches.push({ op: "replace", path: "/status", value: "CANCELLED" });
   }
   if (patches.length === 0) {
-    throw new PayPalError("invalid_input", "provide cancel, notifyPayer, or items to update tracking information", 400);
+    throw new ProviderRequestError(400, "provide cancel, notifyPayer, or items to update tracking information");
   }
   return patches;
 }
@@ -667,7 +660,7 @@ function encodeId(value: unknown, fieldName: string) {
 
 function requireString(value: unknown, fieldName: string) {
   if (typeof value !== "string" || !value.trim()) {
-    throw new PayPalError("invalid_input", `${fieldName} is required`, 400);
+    throw new ProviderRequestError(400, `${fieldName} is required`);
   }
   return value.trim();
 }
@@ -679,7 +672,7 @@ function requireCredentialField(value: unknown, fieldName: string) {
 function requireObject(value: unknown, fieldName: string) {
   const object = optionalRecord(value);
   if (!object) {
-    throw new PayPalError("invalid_input", `${fieldName} must be an object`, 400);
+    throw new ProviderRequestError(400, `${fieldName} must be an object`);
   }
   return object;
 }
@@ -687,7 +680,7 @@ function requireObject(value: unknown, fieldName: string) {
 function requirePayPalObject(value: unknown, resourceName: string) {
   const object = optionalRecord(value);
   if (!object) {
-    throw new PayPalError("provider_error", `PayPal ${resourceName} response is missing`, 502);
+    throw new ProviderRequestError(502, `PayPal ${resourceName} response is missing`);
   }
   return object;
 }
@@ -697,12 +690,12 @@ function readPayPalObjectArray(value: unknown, fieldName: string) {
     return [];
   }
   if (!Array.isArray(value)) {
-    throw new PayPalError("provider_error", `PayPal ${fieldName} response is invalid`, 502);
+    throw new ProviderRequestError(502, `PayPal ${fieldName} response is invalid`);
   }
   return value.map((item) => {
     const object = optionalRecord(item);
     if (!object) {
-      throw new PayPalError("provider_error", `PayPal ${fieldName} response is invalid`, 502);
+      throw new ProviderRequestError(502, `PayPal ${fieldName} response is invalid`);
     }
     return object;
   });

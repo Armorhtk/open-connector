@@ -559,6 +559,9 @@ export const piHoleActionHandlers: ProviderActionHandlerSubset<"pi_hole", PiHole
       fieldName: "teleporter export",
       createError: (message) => new ProviderRequestError(413, message),
     });
+    if (bytes.length === 0) {
+      throw new ProviderRequestError(502, "Pi-hole returned an empty backup response.");
+    }
     const name = "teleporter.zip";
     const mimeType = optionalString(response.headers.get("content-type")) ?? "application/zip";
     if (context.transitFiles) {

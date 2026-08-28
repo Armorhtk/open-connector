@@ -36,15 +36,6 @@ interface WaffoRequestInput {
   phase: "validate" | "execute";
 }
 
-class WaffoExecutionError extends ProviderRequestError {
-  readonly executionCode: string;
-
-  constructor(status: number, message: string, executionCode: string, details?: unknown) {
-    super(status, message, details);
-    this.executionCode = executionCode;
-  }
-}
-
 export const waffoActionHandlers: ProviderActionHandlers<"waffo", ProviderRuntimeHandler<WaffoActionContext>> = {
   async create_store(input, context) {
     const data = await requestWaffoData({
@@ -399,16 +390,6 @@ export function applyWaffoRequestHeaders(input: {
 }
 
 export function mapWaffoExecutionError(error: unknown): ExecutionResult {
-  if (error instanceof WaffoExecutionError) {
-    return {
-      ok: false,
-      error: {
-        code: error.executionCode,
-        message: error.message,
-        details: { status: error.status, details: error.details },
-      },
-    };
-  }
   return toProviderExecutionError(error, "Waffo request failed");
 }
 
@@ -626,10 +607,10 @@ function applyWaffoIdempotencyKey(input: {
 function buildWaffoError(status: number, payload: unknown, phase: "validate" | "execute"): ProviderRequestError {
   const message = readWaffoErrorMessage(payload) ?? `Waffo request failed with ${status}`;
   if (status === 401) return new ProviderRequestError(phase === "validate" ? 400 : 401, message, payload);
-  if (status === 403) return new WaffoExecutionError(403, message, "policy_denied", payload);
+  if (status === 403) return new ProviderRequestError(403, message, payload, "policy_denied");
   if (status === 429) return new ProviderRequestError(429, message, payload);
   if (status === 409 && (message.includes("already being processed") || message.includes("not yet fully processed"))) {
-    return new WaffoExecutionError(409, message, "request_in_progress", payload);
+    return new ProviderRequestError(409, message, payload, "request_in_progress");
   }
   if (status === 404) return new ProviderRequestError(404, message, payload);
   if (status === 400 || status === 409) return new ProviderRequestError(400, message, payload);

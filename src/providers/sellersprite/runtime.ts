@@ -57,15 +57,6 @@ interface SellerSpriteErrorInput {
   phase: SellerSpritePhase;
 }
 
-class SellerSpriteRequestError extends ProviderRequestError {
-  readonly code: string;
-
-  constructor(code: string, status: number, message: string, details?: unknown) {
-    super(status, message, details);
-    this.code = code;
-  }
-}
-
 export const sellerSpriteActionHandlers: ProviderActionHandlers<
   "sellersprite",
   ProviderRuntimeHandler<ApiKeyProviderContext>
@@ -148,19 +139,6 @@ export async function validateSellerSpriteCredential(
 }
 
 export function toSellerSpriteExecutionError(error: unknown): ExecutionResult {
-  if (error instanceof SellerSpriteRequestError) {
-    return {
-      ok: false,
-      error: {
-        code: error.code,
-        message: error.message,
-        details: {
-          status: error.status,
-          details: error.details,
-        },
-      },
-    };
-  }
   return toProviderExecutionError(error, "SellerSprite request failed");
 }
 
@@ -363,42 +341,47 @@ function createSellerSpriteError(input: SellerSpriteErrorInput): ProviderRequest
   };
 
   if (input.status === 429 || input.code === "ERROR_VISIT_MAX" || isRateLimitMessage(message)) {
-    return new SellerSpriteRequestError("rate_limited", 429, message, {
-      ...details,
-      reason: input.code === "ERROR_VISIT_MAX" ? "quota_exhausted" : "rate_limit",
-    });
+    return new ProviderRequestError(
+      429,
+      message,
+      {
+        ...details,
+        reason: input.code === "ERROR_VISIT_MAX" ? "quota_exhausted" : "rate_limit",
+      },
+      "rate_limited",
+    );
   }
 
   if (input.code === "ERROR_SECRET_KEY_OVERDUE") {
-    return new SellerSpriteRequestError("credential_expired", 401, message, details);
+    return new ProviderRequestError(401, message, details, "credential_expired");
   }
 
   if (input.code === "ERROR_SECRET_KEY" || input.code === "ERROR_SECRET_KEY_INVALID" || input.status === 401) {
-    return new SellerSpriteRequestError(
-      input.phase === "validate" ? "invalid_input" : "credential_expired",
+    return new ProviderRequestError(
       input.phase === "validate" ? 400 : 401,
       message,
       details,
+      input.phase === "validate" ? "invalid_input" : "credential_expired",
     );
   }
 
   if (input.code === "ERROR_AUTH_ERROR" || input.status === 403 || isModuleAccessMessage(message)) {
-    return new SellerSpriteRequestError(
-      input.phase === "validate" ? "invalid_input" : "scope_missing",
+    return new ProviderRequestError(
       input.phase === "validate" ? 400 : 403,
       message,
       {
         ...details,
         reason: "module_not_purchased_or_unavailable",
       },
+      input.phase === "validate" ? "invalid_input" : "scope_missing",
     );
   }
 
   if (input.code === "ERROR_PARAM" || (input.status >= 400 && input.status < 500)) {
-    return new SellerSpriteRequestError("invalid_input", 400, message, details);
+    return new ProviderRequestError(400, message, details, "invalid_input");
   }
 
-  return new SellerSpriteRequestError("provider_error", input.status >= 500 ? input.status : 502, message, details);
+  return new ProviderRequestError(input.status >= 500 ? input.status : 502, message, details, "provider_error");
 }
 
 function isRateLimitMessage(message: string): boolean {

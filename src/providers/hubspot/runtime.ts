@@ -22,15 +22,6 @@ interface TokenSet {
   providerScopes: string[];
 }
 
-class HubspotRequestError extends ProviderRequestError {
-  readonly code: string;
-
-  constructor(code: string, message: string, status = 500, details?: unknown) {
-    super(status, message, details);
-    this.code = code;
-  }
-}
-
 type HubspotMcpToolResult = Awaited<ReturnType<Client["callTool"]>>;
 
 export const hubspotMcpEndpoint = "https://mcp.hubspot.com/";
@@ -203,7 +194,7 @@ export async function executeHubspotAction(input: ExecuteHubspotActionInput, fet
 
   const spec = actionSpecs.get(input.actionName);
   if (!spec) {
-    throw new HubspotRequestError("invalid_input", `unknown hubspot action: ${input.actionName}`, 400);
+    throw new ProviderRequestError(400, `unknown hubspot action: ${input.actionName}`, undefined, "invalid_input");
   }
 
   if (spec.operation === "search") {
@@ -219,7 +210,7 @@ export async function executeHubspotAction(input: ExecuteHubspotActionInput, fet
     return updateHubspotRecord(spec.objectType, input.input, context);
   }
 
-  throw new HubspotRequestError("invalid_input", `unknown hubspot action: ${input.actionName}`, 400);
+  throw new ProviderRequestError(400, `unknown hubspot action: ${input.actionName}`, undefined, "invalid_input");
 }
 
 async function callDirectHubspotMcpTool(
@@ -493,8 +484,8 @@ async function callHubspotMcpTool(input: HubspotMcpToolCallInput) {
     });
     return unwrapHubspotMcpOutput(output);
   } catch (error) {
-    if (error instanceof HubspotRequestError && error.status === 401) {
-      throw new HubspotRequestError("credential_expired", error.message, 409);
+    if (error instanceof ProviderRequestError && error.status === 401) {
+      throw new ProviderRequestError(409, error.message, undefined, "credential_expired");
     }
     throw error;
   }
@@ -539,7 +530,7 @@ function mapHubspotMcpError(service: string, error: unknown): ProviderRequestErr
     return error;
   }
   if (error instanceof UnauthorizedError) {
-    return new HubspotRequestError("credential_expired", `${service} MCP token is invalid or expired`, 401, error);
+    return new ProviderRequestError(401, `${service} MCP token is invalid or expired`, error, "credential_expired");
   }
   if (error instanceof SdkHttpError) {
     const status = error.status;
@@ -607,22 +598,22 @@ async function readHubspotJson(response: Response): Promise<unknown> {
 function parseHubspotTokenPayload(payload: unknown, status: number): HubspotTokenPayload {
   const body = asObject(payload);
   if (!body) {
-    throw new HubspotRequestError("provider_error", `malformed hubspot token response (${status})`);
+    throw new ProviderRequestError(500, `malformed hubspot token response (${status})`, undefined, "provider_error");
   }
 
   const accessToken = asString(body.access_token);
   if (!accessToken) {
-    throw new HubspotRequestError("provider_error", "malformed hubspot token response: access_token");
+    throw new ProviderRequestError(500, "malformed hubspot token response: access_token", undefined, "provider_error");
   }
 
   const tokenType = asString(body.token_type);
   if (!tokenType) {
-    throw new HubspotRequestError("provider_error", "malformed hubspot token response: token_type");
+    throw new ProviderRequestError(500, "malformed hubspot token response: token_type", undefined, "provider_error");
   }
 
   const expiresIn = asPositiveFiniteNumber(body.expires_in);
   if (expiresIn == null) {
-    throw new HubspotRequestError("provider_error", "malformed hubspot token response: expires_in");
+    throw new ProviderRequestError(500, "malformed hubspot token response: expires_in", undefined, "provider_error");
   }
 
   return {
@@ -762,16 +753,16 @@ function toHubspotError(status: number, payload: unknown) {
   const message = extractHubspotErrorMessage(payload) ?? `hubspot request failed with status ${status}`;
 
   if (status === 401) {
-    return new HubspotRequestError("credential_expired", message, 409);
+    return new ProviderRequestError(409, message, undefined, "credential_expired");
   }
   if (status === 400 || status === 404) {
-    return new HubspotRequestError("invalid_input", message, status);
+    return new ProviderRequestError(status, message, undefined, "invalid_input");
   }
   if (status === 429) {
-    return new HubspotRequestError("rate_limited", message, 429);
+    return new ProviderRequestError(429, message, undefined, "rate_limited");
   }
 
-  return new HubspotRequestError("provider_error", message, status || 500);
+  return new ProviderRequestError(status || 500, message, undefined, "provider_error");
 }
 
 function extractHubspotErrorMessage(payload: unknown): string | null {
@@ -838,7 +829,7 @@ function asStringArray(value: unknown): string[] | undefined {
 function requireNonEmptyString(value: unknown, field: string): string {
   const stringValue = asString(value);
   if (!stringValue) {
-    throw new HubspotRequestError("invalid_input", `${field} is required`, 400);
+    throw new ProviderRequestError(400, `${field} is required`, undefined, "invalid_input");
   }
 
   return stringValue;

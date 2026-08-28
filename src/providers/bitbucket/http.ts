@@ -1,11 +1,5 @@
 import { createProviderTimeout, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
 
-class ConnectorError extends ProviderRequestError {
-  constructor(_code: string, message: string, status: number, cause?: unknown) {
-    super(status, message, cause);
-  }
-}
-
 const bitbucketRequestTimeoutMs = 30_000;
 const bitbucketMaxResponseBytes = 10 * 1024 * 1024;
 
@@ -28,14 +22,14 @@ export async function fetchBitbucketText(
       text: await readLimitedText(response),
     };
   } catch (error) {
-    if (error instanceof ConnectorError) {
+    if (error instanceof ProviderRequestError) {
       throw error;
     }
     if (timeout.didTimeout() || isAbortLikeError(error)) {
-      throw new ConnectorError("provider_error", "bitbucket request timed out", 504);
+      throw new ProviderRequestError(504, "bitbucket request timed out");
     }
     const message = error instanceof Error ? error.message : "network error";
-    throw new ConnectorError("provider_error", `bitbucket request failed: ${message}`, 502);
+    throw new ProviderRequestError(502, `bitbucket request failed: ${message}`);
   } finally {
     timeout.cleanup();
   }
@@ -80,7 +74,7 @@ async function readLimitedText(response: Response) {
 }
 
 function responseTooLargeError() {
-  return new ConnectorError("provider_error", "bitbucket response is too large", 502);
+  return new ProviderRequestError(502, "bitbucket response is too large");
 }
 
 function isAbortLikeError(error: unknown) {

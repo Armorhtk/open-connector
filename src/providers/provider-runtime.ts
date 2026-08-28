@@ -239,11 +239,13 @@ export interface ProviderInputFile {
 export class ProviderRequestError extends Error {
   readonly status: number;
   readonly details?: unknown;
+  readonly code?: string;
 
-  constructor(status: number, message: string, details?: unknown) {
+  constructor(status: number, message: string, details?: unknown, code?: string) {
     super(message);
     this.status = status;
     this.details = details;
+    this.code = code;
   }
 }
 
@@ -850,13 +852,14 @@ export function toProviderExecutionError(error: unknown, fallbackMessage: string
       ok: false,
       error: {
         code:
-          error.status === 401 || error.status === 403
+          error.code ??
+          (error.status === 401 || error.status === 403
             ? "authorization_failed"
             : error.status === 429
               ? "rate_limited"
               : error.status < 500
                 ? "invalid_input"
-                : "provider_error",
+                : "provider_error"),
         message: error.message,
         details: {
           status: error.status,

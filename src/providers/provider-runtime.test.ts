@@ -11,6 +11,7 @@ import {
   defineProviderProxy,
   mapProviderActionSources,
   providerFetch,
+  ProviderRequestError,
   readProviderJson,
   toProviderExecutionError,
 } from "./provider-runtime.ts";
@@ -20,7 +21,31 @@ afterEach(() => {
   setPrivateNetworkAccessAllowed(false);
 });
 
+describe("ProviderRequestError", () => {
+  it("keeps provider error codes on the shared request error", () => {
+    const error = new ProviderRequestError(429, "Provider quota exhausted", { retryAfter: 30 }, "rate_limited");
+
+    expect(error).toMatchObject({
+      status: 429,
+      message: "Provider quota exhausted",
+      details: { retryAfter: 30 },
+      code: "rate_limited",
+    });
+  });
+});
+
 describe("toProviderExecutionError", () => {
+  it("prefers an explicit provider error code over status inference", () => {
+    expect(
+      toProviderExecutionError(
+        new ProviderRequestError(409, "Still processing", undefined, "request_in_progress"),
+        "failed",
+      ),
+    ).toMatchObject({
+      error: { code: "request_in_progress" },
+    });
+  });
+
   it("maps unknown exceptions to a generic internal error", () => {
     expect(toProviderExecutionError(new Error("secret provider response"), "Provider request failed.")).toEqual({
       ok: false,

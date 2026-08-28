@@ -52,15 +52,6 @@ export interface WangdianContext {
   signal?: AbortSignal;
 }
 
-class WangdianRequestError extends ProviderRequestError {
-  readonly code: string;
-
-  constructor(code: string, message: string, status: number, details?: unknown) {
-    super(status, message, details);
-    this.code = code;
-  }
-}
-
 const actionConfigByName: ProviderActionSources<"wangdian", WangdianActionConfig> = {
   list_shops: { endpoint: "shop.php", responseField: "shoplist", outputField: "shops" },
   list_warehouses: { endpoint: "warehouse_query.php", responseField: "warehouses", outputField: "warehouses" },
@@ -175,16 +166,6 @@ export function readWangdianProxyParameters(body: unknown): Record<string, unkno
 }
 
 export function toWangdianExecutionError(error: unknown): ExecutionResult {
-  if (error instanceof WangdianRequestError) {
-    return {
-      ok: false,
-      error: {
-        code: error.code,
-        message: error.message,
-        details: { status: error.status, details: error.details },
-      },
-    };
-  }
   return toProviderExecutionError(error, "Wangdian request failed");
 }
 
@@ -480,7 +461,7 @@ async function readWangdianPayload(response: Response): Promise<unknown> {
   }
 }
 
-function createWangdianError(status: number, payload: unknown, phase: WangdianRequestPhase): WangdianRequestError {
+function createWangdianError(status: number, payload: unknown, phase: WangdianRequestPhase): ProviderRequestError {
   const root = optionalRecord(payload);
   const code = parseOptionalInteger(root?.code);
   const message = optionalString(root?.message) ?? `Wangdian request failed with status ${status}`;
@@ -517,8 +498,8 @@ function createWangdianError(status: number, payload: unknown, phase: WangdianRe
   return wangdianError("provider_error", message, 502, payload);
 }
 
-function wangdianError(code: string, message: string, status: number, details?: unknown): WangdianRequestError {
-  return new WangdianRequestError(code, message, status, details);
+function wangdianError(code: string, message: string, status: number, details?: unknown): ProviderRequestError {
+  return new ProviderRequestError(status, message, details, code);
 }
 
 function parseOptionalInteger(value: unknown): number | undefined {

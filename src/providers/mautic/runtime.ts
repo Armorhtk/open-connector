@@ -30,12 +30,6 @@ type MauticActionHandler = (
 const mauticRequestTimeoutMs = 30_000;
 const mauticMaxResponseBytes = 10 * 1024 * 1024;
 
-class MauticError extends ProviderRequestError {
-  constructor(_code: string, message: string, status: number, _cause?: unknown, details?: unknown) {
-    super(status, message, details);
-  }
-}
-
 export const mauticActionHandlers: Record<string, MauticActionHandler> = {
   async list_contacts(input, credential, fetcher) {
     const payload = await requestMauticJson({
@@ -164,23 +158,19 @@ export function normalizeMauticBaseUrl(
 ): string {
   const trimmed = value.trim();
   if (!trimmed) {
-    throw new MauticError("invalid_input", "baseUrl is required", 400);
+    throw new ProviderRequestError(400, "baseUrl is required");
   }
 
   const url = assertPublicHttpUrl(trimmed, {
     fieldName: "baseUrl",
-    createError: (message) => new MauticError("invalid_input", message, 400),
+    createError: (message) => new ProviderRequestError(400, message),
     allowPrivateNetwork,
   });
   if (url.protocol !== "https:") {
-    throw new MauticError(
-      "invalid_input",
-      "baseUrl must use https because Mautic Basic Auth sends reusable credentials",
-      400,
-    );
+    throw new ProviderRequestError(400, "baseUrl must use https because Mautic Basic Auth sends reusable credentials");
   }
   if (url.username || url.password) {
-    throw new MauticError("invalid_input", "baseUrl must not include credentials", 400);
+    throw new ProviderRequestError(400, "baseUrl must not include credentials");
   }
 
   let pathname = url.pathname;
@@ -203,7 +193,7 @@ function buildMauticCredential(input: Record<string, string>): MauticCredential 
 
 function requireCredentialValue(value: string | undefined, fieldName: string, trim = true) {
   if (typeof value !== "string" || value.trim() === "") {
-    throw new MauticError("invalid_input", `${fieldName} is required`, 400);
+    throw new ProviderRequestError(400, `${fieldName} is required`);
   }
   return trim ? value.trim() : value;
 }
@@ -234,7 +224,7 @@ function readEntityId(value: unknown, fieldName: string) {
 function requireInputFields(value: unknown) {
   const fields = optionalRecord(value);
   if (!fields || Object.keys(fields).length === 0) {
-    throw new MauticError("invalid_input", "fields must contain at least one contact field", 400);
+    throw new ProviderRequestError(400, "fields must contain at least one contact field");
   }
   return fields;
 }
@@ -256,11 +246,7 @@ async function changeSegmentMembership(
   });
   const success = payload.success;
   if (success !== true && success !== 1 && success !== "1") {
-    throw new MauticError(
-      "provider_error",
-      `Mautic did not confirm the segment membership ${operation} operation`,
-      502,
-    );
+    throw new ProviderRequestError(502, `Mautic did not confirm the segment membership ${operation} operation`);
   }
   return { success: true, segmentId, contactId };
 }
@@ -292,26 +278,25 @@ async function requestMauticJson(input: MauticRequest): Promise<Record<string, u
       throw mapMauticError(response, payload, input.phase);
     }
     if (parsedPayload.kind === "empty") {
-      throw new MauticError("provider_error", "Mautic returned an empty response", 502);
+      throw new ProviderRequestError(502, "Mautic returned an empty response");
     }
     if (parsedPayload.kind === "invalid_json") {
-      throw new MauticError("provider_error", "Mautic returned invalid JSON", 502);
+      throw new ProviderRequestError(502, "Mautic returned invalid JSON");
     }
     if (parsedPayload.kind === "non_object") {
-      throw new MauticError("provider_error", "Mautic returned a non-object JSON response", 502);
+      throw new ProviderRequestError(502, "Mautic returned a non-object JSON response");
     }
     return parsedPayload.value;
   } catch (error) {
-    if (error instanceof MauticError) {
+    if (error instanceof ProviderRequestError) {
       throw error;
     }
     if (timeout.didTimeout()) {
-      throw new MauticError("provider_error", "Mautic request timed out", 504);
+      throw new ProviderRequestError(504, "Mautic request timed out");
     }
-    throw new MauticError(
-      "provider_error",
-      error instanceof Error ? `Mautic request failed: ${error.message}` : "Mautic request failed",
+    throw new ProviderRequestError(
       502,
+      error instanceof Error ? `Mautic request failed: ${error.message}` : "Mautic request failed",
     );
   } finally {
     timeout.cleanup();
@@ -322,7 +307,7 @@ async function readBoundedResponseText(response: Response) {
   const contentLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(contentLength) && contentLength > mauticMaxResponseBytes) {
     await response.body?.cancel();
-    throw new MauticError("provider_error", `Mautic response exceeds ${mauticMaxResponseBytes} bytes`, 413);
+    throw new ProviderRequestError(413, `Mautic response exceeds ${mauticMaxResponseBytes} bytes`);
   }
   if (!response.body) {
     return "";
@@ -340,7 +325,7 @@ async function readBoundedResponseText(response: Response) {
       totalBytes += chunk.value.byteLength;
       if (totalBytes > mauticMaxResponseBytes) {
         await reader.cancel();
-        throw new MauticError("provider_error", `Mautic response exceeds ${mauticMaxResponseBytes} bytes`, 413);
+        throw new ProviderRequestError(413, `Mautic response exceeds ${mauticMaxResponseBytes} bytes`);
       }
       chunks.push(chunk.value);
     }
@@ -378,29 +363,24 @@ function mapMauticError(
 ) {
   const message = readMauticErrorMessage(payload) ?? `Mautic request failed with HTTP ${response.status}`;
   if (phase === "validate" && (response.status === 401 || response.status === 403)) {
-    return new MauticError(
-      "invalid_input",
-      "Mautic username or password is invalid, Basic Auth is disabled, or the user cannot access the API",
+    return new ProviderRequestError(
       400,
+      "Mautic username or password is invalid, Basic Auth is disabled, or the user cannot access the API",
     );
   }
   if (response.status === 401) {
-    return new MauticError("credential_expired", message, 401);
+    return new ProviderRequestError(401, message);
   }
   if (response.status === 403) {
-    return new MauticError(
-      "scope_missing",
-      "The connected Mautic user does not have permission to perform this action",
-      403,
-    );
+    return new ProviderRequestError(403, "The connected Mautic user does not have permission to perform this action");
   }
   if (phase === "validate" && response.status >= 400 && response.status < 500) {
-    return new MauticError("invalid_input", message, 400);
+    return new ProviderRequestError(400, message);
   }
   if (response.status === 404) {
-    return new MauticError("invalid_input", message, 404);
+    return new ProviderRequestError(404, message);
   }
-  return new MauticError("provider_error", message, response.status >= 500 ? 502 : response.status);
+  return new ProviderRequestError(response.status >= 500 ? 502 : response.status, message);
 }
 
 function readMauticErrorMessage(payload: Record<string, unknown> | undefined) {
@@ -424,7 +404,7 @@ function readMauticErrorMessage(payload: Record<string, unknown> | undefined) {
 
 function readObjectValue(payload: Record<string, unknown>, key: string) {
   if (!(key in payload)) {
-    throw new MauticError("provider_error", `Mautic response is missing ${key}`, 502);
+    throw new ProviderRequestError(502, `Mautic response is missing ${key}`);
   }
   return payload[key];
 }
@@ -432,7 +412,7 @@ function readObjectValue(payload: Record<string, unknown>, key: string) {
 function requireResponseObject(value: unknown, label: string) {
   const object = optionalRecord(value);
   if (!object) {
-    throw new MauticError("provider_error", `Mautic returned invalid ${label} data`, 502);
+    throw new ProviderRequestError(502, `Mautic returned invalid ${label} data`);
   }
   return object;
 }

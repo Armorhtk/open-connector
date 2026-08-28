@@ -91,15 +91,6 @@ class InMemoryLingxingMcpRateLimiter implements LingxingMcpRateLimiter {
 
 const lingxingMcpRateLimiter = createLingxingMcpRateLimiter();
 
-class LingxingRequestError extends ProviderRequestError {
-  readonly code: string;
-
-  constructor(code: string, status: number, message: string, details?: unknown) {
-    super(status, message, details);
-    this.code = code;
-  }
-}
-
 export const lingxingMcpActionHandlers: ProviderActionHandlers<
   "lingxing_mcp",
   ProviderRuntimeHandler<LingxingContext>
@@ -385,11 +376,11 @@ async function runLingxingMcp<T>(phase: LingxingRequestPhase, run: () => Promise
     return await run();
   } catch (error) {
     if (error instanceof ProviderRequestError && error.status === 401) {
-      throw new LingxingRequestError(
-        phase === "validate" ? "invalid_input" : "credential_expired",
+      throw new ProviderRequestError(
         phase === "validate" ? 400 : 401,
         "Lingxing MCP Server URL or X-Mcp-Key is invalid",
         error,
+        phase === "validate" ? "invalid_input" : "credential_expired",
       );
     }
     throw error;
@@ -409,16 +400,6 @@ function hashLingxingRateLimitKey(credential: LingxingCredential): string {
 }
 
 export function toLingxingExecutionError(error: unknown): ExecutionResult {
-  if (error instanceof LingxingRequestError) {
-    return {
-      ok: false,
-      error: {
-        code: error.code,
-        message: error.message,
-        details: { status: error.status, details: error.details },
-      },
-    };
-  }
   return toProviderExecutionError(error, "Lingxing MCP request failed");
 }
 

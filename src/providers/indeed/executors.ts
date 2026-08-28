@@ -39,16 +39,6 @@ const actionHandlers: ProviderActionHandlers<"indeed", IndeedActionHandler> = {
   get_current_user(_input, context) {
     return requestUserInfo(context);
   },
-  execute_graphql(input, context) {
-    return requestGraphQl(
-      {
-        query: requiredString(input.query, "query", badInput),
-        variables: optionalRecord(input.variables),
-        operationName: optionalString(input.operationName),
-      },
-      context,
-    );
-  },
   async find_employer_jobs(input, context) {
     const filters = {
       legacySourceId: optionalString(input.legacySourceId),
@@ -144,7 +134,6 @@ export const credentialValidators: CredentialValidators = {
 interface GraphQlRequest {
   query: string;
   variables?: Record<string, unknown>;
-  operationName?: string;
 }
 
 async function requestGraphQl(input: GraphQlRequest, context: OAuthProviderContext): Promise<Record<string, unknown>> {
