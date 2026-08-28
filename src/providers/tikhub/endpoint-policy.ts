@@ -7,77 +7,11 @@ export interface TikHubEndpointPolicyMatch {
   requiredScope: string;
 }
 
-interface TikHubEndpointRule {
-  category: string;
-  method: TikHubEndpointMethod;
-  path: string;
-  requiredScope: string;
-}
+const tikhubUserCategory = "TikHub-User-API";
+const tikhubUserPathPrefix = "/api/v1/tikhub/user/";
 
-const tikhubEndpointRules = [
-  approvedGet("TikTok-Web-API", "/api/v1/tiktok/web/fetch_user_profile"),
-  approvedGet("TikTok-Web-API", "/api/v1/tiktok/web/fetch_post_detail"),
-  approvedGet("TikTok-Web-API", "/api/v1/tiktok/web/fetch_user_post"),
-  approvedGet("TikTok-Web-API", "/api/v1/tiktok/web/fetch_post_comment"),
-  approvedGet("TikTok-Web-API", "/api/v1/tiktok/web/fetch_tag_detail"),
-  approvedGet("TikTok-Web-API", "/api/v1/tiktok/web/fetch_tag_post"),
-  approvedGet("Douyin-Web-API", "/api/v1/douyin/web/fetch_one_video"),
-  approvedGet("Douyin-Web-API", "/api/v1/douyin/web/fetch_one_video_by_share_url"),
-  approvedGet("Douyin-Web-API", "/api/v1/douyin/web/fetch_user_profile_by_uid"),
-  approvedGet("Douyin-Web-API", "/api/v1/douyin/web/fetch_user_profile_by_short_id"),
-  approvedGet("Douyin-Web-API", "/api/v1/douyin/web/fetch_video_comments"),
-  approvedGet("Douyin-Web-API", "/api/v1/douyin/web/fetch_video_comment_replies"),
-  approvedGet("Xiaohongshu-App-V2-API", "/api/v1/xiaohongshu/app_v2/search_notes"),
-  approvedGet("Xiaohongshu-App-V2-API", "/api/v1/xiaohongshu/app_v2/search_users"),
-  approvedGet("Xiaohongshu-App-V2-API", "/api/v1/xiaohongshu/app_v2/get_note_comments"),
-  approvedGet("Xiaohongshu-App-V2-API", "/api/v1/xiaohongshu/app_v2/get_note_sub_comments"),
-  approvedGet("Xiaohongshu-App-V2-API", "/api/v1/xiaohongshu/app_v2/get_user_info"),
-  approvedGet("Xiaohongshu-App-V2-API", "/api/v1/xiaohongshu/app_v2/get_user_posted_notes"),
-  approvedPost("Douyin-Search-API", "/api/v1/douyin/search/fetch_video_search_v1"),
-  approvedPost("Douyin-Search-API", "/api/v1/douyin/search/fetch_user_search"),
-  approvedGet("Douyin-Billboard-API", "/api/v1/douyin/billboard/fetch_hot_total_list"),
-] as const satisfies readonly TikHubEndpointRule[];
-
-const sensitiveRequestFieldNames = new Set([
-  "authorization",
-  "authtoken",
-  "accesstoken",
-  "refreshtoken",
-  "apikey",
-  "password",
-  "passwd",
-  "secret",
-  "sessionid",
-  "sessionkey",
-  "deviceid",
-  "fingerprint",
-  "signature",
-  "captcha",
-  "mstoken",
-  "xbogus",
-  "abogus",
-]);
-
-export function isKnownTikHubEndpointCategory(category: string): boolean {
-  return tikhubEndpointRules.some((rule) => rule.category === category);
-}
-
-export function isTikHubSensitiveRequestField(fieldName: string): boolean {
-  const normalized = normalizeRequestFieldName(fieldName);
-  return sensitiveRequestFieldNames.has(normalized) || normalized.includes("cookie");
-}
-
-function normalizeRequestFieldName(fieldName: string) {
-  let normalized = "";
-  for (const character of fieldName.trim().toLowerCase()) {
-    const code = character.charCodeAt(0);
-    const isDigit = code >= 48 && code <= 57;
-    const isLowercase = code >= 97 && code <= 122;
-    if (isDigit || isLowercase) {
-      normalized += character;
-    }
-  }
-  return normalized;
+export function isEligibleTikHubEndpointCategory(category: string): boolean {
+  return category !== tikhubUserCategory;
 }
 
 export function matchTikHubEndpointPolicy(
@@ -85,18 +19,15 @@ export function matchTikHubEndpointPolicy(
   pathInput: string,
   category?: string,
 ): TikHubEndpointPolicyMatch | undefined {
-  const method = normalizeMethod(methodInput);
+  normalizeMethod(methodInput);
   const { path, placeholders } = normalizePath(pathInput);
-  const rule = tikhubEndpointRules.find(
-    (candidate) =>
-      candidate.path === path &&
-      candidate.method === method &&
-      (category === undefined || candidate.category === category),
-  );
-  if (!rule) {
+  if (
+    path.startsWith(tikhubUserPathPrefix) ||
+    (category !== undefined && !isEligibleTikHubEndpointCategory(category))
+  ) {
     return undefined;
   }
-  return { placeholders, requiredScope: rule.requiredScope };
+  return { placeholders, requiredScope: requiredScopeForPath(path) };
 }
 
 export function assertTikHubEndpointEligible(
@@ -116,7 +47,7 @@ export function assertResolvedTikHubEndpointEligible(
   encodedPath: string,
 ): TikHubEndpointPolicyMatch {
   if (
-    !encodedPath.startsWith("/api/") ||
+    !encodedPath.startsWith("/api/v1/") ||
     encodedPath.includes("?") ||
     encodedPath.includes("#") ||
     encodedPath.includes("\\") ||
@@ -151,28 +82,14 @@ export function assertResolvedTikHubEndpointEligible(
     decodedSegments.push(segment);
   }
 
-  const decodedPath = `/${decodedSegments.join("/")}`;
-  const match = matchTikHubEndpointPolicy(methodInput, decodedPath);
+  const match = matchTikHubEndpointPolicy(methodInput, `/${decodedSegments.join("/")}`);
   if (!match) {
     throw policyDenied();
   }
   return match;
 }
 
-function approvedGet(category: string, path: string): TikHubEndpointRule {
-  return { category, method: "GET", path, requiredScope: requiredScopeForPath(path) };
-}
-
-function approvedPost(category: string, path: string): TikHubEndpointRule {
-  return {
-    category,
-    method: "POST",
-    path,
-    requiredScope: requiredScopeForPath(path),
-  };
-}
-
-function requiredScopeForPath(path: string) {
+function requiredScopeForPath(path: string): string {
   return `${path.split("/").slice(0, 5).join("/")}/`;
 }
 
@@ -187,9 +104,9 @@ function normalizeMethod(methodInput: string): TikHubEndpointMethod {
   return method;
 }
 
-function normalizePath(pathInput: string) {
-  if (typeof pathInput !== "string" || !pathInput.startsWith("/api/")) {
-    throw invalidEndpointInput("path must be an absolute TikHub API path");
+function normalizePath(pathInput: string): { path: string; placeholders: string[] } {
+  if (typeof pathInput !== "string" || !pathInput.startsWith("/api/v1/")) {
+    throw invalidEndpointInput("path must be an absolute TikHub API v1 path");
   }
   if (
     pathInput.includes("://") ||
@@ -224,7 +141,7 @@ function normalizePath(pathInput: string) {
   return { path: pathInput, placeholders };
 }
 
-function isSafePathToken(value: string) {
+function isSafePathToken(value: string): boolean {
   if (value === "") {
     return false;
   }
@@ -250,10 +167,14 @@ export function hasTikHubControlCharacter(value: string): boolean {
   return false;
 }
 
-function invalidEndpointInput(message: string) {
+function invalidEndpointInput(message: string): TikHubRequestError {
   return new TikHubRequestError("invalid_input", message, 400);
 }
 
-function policyDenied() {
-  return new TikHubRequestError("policy_denied", "TikHub endpoint is outside the approved public-data policy", 403);
+function policyDenied(): TikHubRequestError {
+  return new TikHubRequestError(
+    "policy_denied",
+    "TikHub account endpoints are unavailable through dynamic invocation",
+    403,
+  );
 }

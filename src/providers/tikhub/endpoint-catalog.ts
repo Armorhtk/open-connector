@@ -10,7 +10,7 @@ import { createProviderTimeout } from "../provider-runtime.ts";
 import { cancelResponseBody, readBoundedResponseText } from "./bounded-response.ts";
 import { parseTikHubEndpointDocument } from "./endpoint-document.ts";
 import { parseTikHubLlmsIndex, tikhubDocsIndexUrl } from "./endpoint-index.ts";
-import { isKnownTikHubEndpointCategory } from "./endpoint-policy.ts";
+import { isEligibleTikHubEndpointCategory } from "./endpoint-policy.ts";
 import { TikHubRequestError } from "./errors.ts";
 
 export { parseTikHubEndpointDocument } from "./endpoint-document.ts";
@@ -120,10 +120,10 @@ async function discoverTikHubEndpointsWithCache(
   if (!Number.isInteger(limit) || limit < 1 || limit > 20) {
     throw new TikHubRequestError("invalid_input", "limit must be an integer between 1 and 20", 400);
   }
-  if (input.category !== undefined && !isKnownTikHubEndpointCategory(input.category)) {
+  if (input.category !== undefined && !isEligibleTikHubEndpointCategory(input.category)) {
     throw new TikHubRequestError(
       "policy_denied",
-      `TikHub category is outside the approved public-data policy: ${input.category}`,
+      `TikHub account category is unavailable through dynamic discovery: ${input.category}`,
       403,
     );
   }
@@ -133,7 +133,7 @@ async function discoverTikHubEndpointsWithCache(
   const cursorOffset = decodeCursor(input.cursor, catalog.snapshot.catalogVersion, filterHash);
   const eligibleEntries = catalog.snapshot.entries.filter(
     (entry) =>
-      isKnownTikHubEndpointCategory(entry.category) &&
+      isEligibleTikHubEndpointCategory(entry.category) &&
       (input.category === undefined || entry.category === input.category),
   );
   if (cursorOffset > eligibleEntries.length) {

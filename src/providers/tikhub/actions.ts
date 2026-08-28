@@ -151,7 +151,7 @@ const discoveredEndpointSchema = s.object("One currently discovered TikHub endpo
 const discoverEndpointsAction = defineProviderAction(service, {
   name: "discover_endpoints",
   description:
-    "Discover current, policy-approved TikHub public-data endpoints from the official documentation catalog.",
+    "Discover current TikHub functional API endpoints from the official documentation catalog, excluding account APIs.",
   requiredScopes: [],
   providerPermissions: [],
   followUpActions: ["tikhub.invoke_endpoint"],
@@ -161,7 +161,7 @@ const discoverEndpointsAction = defineProviderAction(service, {
       query: s.string("Short title, operation ID, category, or path terms to match.", {
         maxLength: 200,
       }),
-      category: s.string("An exact policy-approved TikHub API family name.", {
+      category: s.string("An exact TikHub functional API family name.", {
         maxLength: 100,
       }),
       cursor: s.nullable(
@@ -177,7 +177,7 @@ const discoverEndpointsAction = defineProviderAction(service, {
     },
     { optional: ["query", "category", "cursor", "limit"] },
   ),
-  outputSchema: s.object("The current page of policy-approved TikHub endpoint contracts.", {
+  outputSchema: s.object("The current page of TikHub functional endpoint contracts.", {
     catalogVersion: s.string("The SHA-256 digest of the current TikHub documentation index."),
     endpoints: s.array("The endpoints discovered in this page.", discoveredEndpointSchema),
     nextCursor: s.nullable(s.string("The next opaque catalog cursor when more entries remain.")),
@@ -197,7 +197,8 @@ const invokeRequestSchema = s.object(
 
 const invokeEndpointAction = defineProviderAction(service, {
   name: "invoke_endpoint",
-  description: "Invoke one policy-approved TikHub public-data endpoint at the fixed TikHub API origin.",
+  description:
+    "Invoke one TikHub functional API endpoint at the fixed TikHub API origin. TikHub account endpoints are excluded.",
   requiredScopes: [],
   providerPermissions: [],
   followUpActions: ["tikhub.discover_endpoints"],

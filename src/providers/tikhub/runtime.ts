@@ -15,7 +15,6 @@ import {
   assertResolvedTikHubEndpointEligible,
   assertTikHubEndpointEligible,
   hasTikHubControlCharacter,
-  isTikHubSensitiveRequestField,
 } from "./endpoint-policy.ts";
 import { TikHubRequestError } from "./errors.ts";
 
@@ -355,7 +354,7 @@ function buildQuery(value: unknown) {
   const result = new URLSearchParams();
   let valueCount = 0;
   for (const [key, rawValue] of entries) {
-    if (key === "" || hasTikHubControlCharacter(key) || isTikHubSensitiveRequestField(key)) {
+    if (key === "" || hasTikHubControlCharacter(key)) {
       throw new TikHubRequestError("invalid_input", "request.query contains an invalid key", 400);
     }
     const values = Array.isArray(rawValue) ? rawValue : [rawValue];
@@ -491,13 +490,6 @@ function assertJsonValue(value: unknown, path: string) {
     const entries = Object.entries(current);
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const [key, child] = entries[index]!;
-      if (isTikHubSensitiveRequestField(key)) {
-        throw new TikHubRequestError(
-          "invalid_input",
-          `${frame.path}.${key} is not allowed in a public-data request`,
-          400,
-        );
-      }
       assertDynamicStringAllowed(key, `${frame.path} key`);
       stack.push({
         kind: "visit",

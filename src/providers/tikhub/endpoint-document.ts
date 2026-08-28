@@ -3,7 +3,7 @@ import type { TikHubDiscoveredEndpoint, TikHubLlmsIndexEntry } from "./endpoint-
 
 import { createHash } from "node:crypto";
 import { parseDocument } from "yaml";
-import { isTikHubSensitiveRequestField, matchTikHubEndpointPolicy } from "./endpoint-policy.ts";
+import { matchTikHubEndpointPolicy } from "./endpoint-policy.ts";
 import { TikHubRequestError } from "./errors.ts";
 
 const tikhubOpenApiMaxSchemaDepth = 64;
@@ -214,9 +214,6 @@ function readOperationParameters(input: {
     const location = resolved.in;
     if (!name || (location !== "path" && location !== "query")) {
       throw providerDocumentError(input.endpointId, "uses an unsupported parameter location");
-    }
-    if (isTikHubSensitiveRequestField(name)) {
-      throw providerDocumentError(input.endpointId, `request parameter ${name} is outside the public-data policy`);
     }
     validateParameterSerialization(resolved, location, input.endpointId);
     const schema = sanitizeSchema(resolved.schema, input.root, input.endpointId, new Set(), input.budget);
@@ -485,12 +482,10 @@ function sanitizeSchema(
     if (key === "properties") {
       const properties = requireRecord(value, endpointId, "schema properties");
       result.properties = Object.fromEntries(
-        Object.entries(properties).map(([name, schema]) => {
-          if (isTikHubSensitiveRequestField(name)) {
-            throw providerDocumentError(endpointId, `request property ${name} is outside the public-data policy`);
-          }
-          return [name, sanitizeSchema(schema, root, endpointId, new Set(refStack), budget, depth + 1)];
-        }),
+        Object.entries(properties).map(([name, schema]) => [
+          name,
+          sanitizeSchema(schema, root, endpointId, new Set(refStack), budget, depth + 1),
+        ]),
       );
       continue;
     }

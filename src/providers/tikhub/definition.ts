@@ -13,7 +13,7 @@ export const provider: ProviderDefinition = {
       label: "API Token",
       placeholder: "tikhub_api_token",
       description:
-        "TikHub API token sent with the Authorization: Bearer header. Create it in the TikHub API key dashboard. Grant /api/v1/tikhub/user/ for validation and User actions. For invoke_endpoint, grant only the requiredScope values returned by discover_endpoints for the endpoints you intend to call.",
+        "TikHub API token sent with the Authorization: Bearer header. Create it in the TikHub API key dashboard. Grant /api/v1/tikhub/user/ for validation and User actions. For invoke_endpoint, grant the requiredScope values returned by discover_endpoints for the functional endpoints you intend to call.",
     },
   ],
   homepageUrl: "https://tikhub.io/",
