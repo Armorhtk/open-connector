@@ -1,7 +1,7 @@
 import type { ExecutionContext, ResolvedCredential, TransitFileStore } from "../../core/types.ts";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { executors } from "./executors.ts";
+import { credentialValidators, executors } from "./executors.ts";
 
 interface CapturedRequest {
   url: URL;
@@ -15,6 +15,16 @@ const oauthCredential: Extract<ResolvedCredential, { authType: "oauth2" }> = {
   tokenType: "Bearer",
   profile: { accountId: "account-1", displayName: "Cloudflare test", grantedScopes: [] },
   metadata: { accountId: "account-1" },
+};
+
+const customCredential: Extract<ResolvedCredential, { authType: "custom_credential" }> = {
+  authType: "custom_credential",
+  values: {
+    apiKey: "cf-api-token-secret",
+    accountId: "account-1",
+  },
+  profile: { accountId: "account-1", displayName: "Cloudflare R2 test", grantedScopes: [] },
+  metadata: { accountId: "account-1", tokenId: "token-id-1" },
 };
 
 afterEach(() => {
@@ -138,6 +148,350 @@ describe("Cloudflare R2 download_object", () => {
   });
 });
 
+describe("Cloudflare R2 generate_presigned_url", () => {
+  it("signs locally from a custom API token without sending a network request", async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+
+    const result = await executePresign({
+      bucketName: "documents",
+      objectKey: "reports/annual report #1.txt",
+      method: "HEAD",
+      expiresSeconds: 120,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      output: {
+        bucketName: "documents",
+        objectKey: "reports/annual report #1.txt",
+        method: "HEAD",
+        expiresSeconds: 120,
+        requiredHeaders: {},
+      },
+    });
+    expect(result.ok).toBe(true);
+    const output = readPresignedOutput(result);
+    const url = new URL(String(output.url));
+    expect(url.hostname).toBe("account-1.r2.cloudflarestorage.com");
+    expect(url.pathname).toBe("/documents/reports/annual%20report%20%231.txt");
+    expect(url.searchParams.get("X-Amz-Algorithm")).toBe("AWS4-HMAC-SHA256");
+    expect(url.searchParams.get("X-Amz-Credential")).toMatch(/^token-id-1\/\d{8}\/auto\/s3\/aws4_request$/);
+    expect(url.searchParams.get("X-Amz-Expires")).toBe("120");
+    expect(url.searchParams.get("X-Amz-SignedHeaders")).toBe("host");
+    expect(url.searchParams.get("X-Amz-Signature")).toMatch(/^[0-9a-f]{64}$/);
+    expect(typeof output.expiresAt).toBe("string");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("defaults method to GET and expiresSeconds to 3600", async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+
+    const result = await executePresign({
+      bucketName: "documents",
+      objectKey: "notes.txt",
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      output: {
+        method: "GET",
+        expiresSeconds: 3600,
+      },
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("includes signed Content-Type headers for PUT URLs", async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+
+    const result = await executePresign({
+      bucketName: "documents",
+      objectKey: "notes.txt",
+      method: "PUT",
+      contentType: "text/plain",
+      jurisdiction: "eu",
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      output: {
+        method: "PUT",
+        requiredHeaders: { "content-type": "text/plain" },
+      },
+    });
+    expect(result.ok).toBe(true);
+    const url = new URL(String(readPresignedOutput(result).url));
+    expect(url.hostname).toBe("account-1.eu.r2.cloudflarestorage.com");
+    expect(url.searchParams.get("X-Amz-SignedHeaders")).toBe("content-type;host");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("signs the us jurisdiction host", async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+
+    const result = await executePresign({
+      bucketName: "documents",
+      objectKey: "notes.txt",
+      jurisdiction: "us",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(new URL(String(readPresignedOutput(result).url)).hostname).toBe("account-1.us.r2.cloudflarestorage.com");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unknown jurisdiction with the allowed values", async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+
+    const result = await executePresign({
+      bucketName: "documents",
+      objectKey: "notes.txt",
+      jurisdiction: "moon",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "invalid_input",
+        message: "jurisdiction must be one of default, eu, fedramp, us",
+      },
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects DELETE because the action only signs GET, PUT, and HEAD", async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+
+    const result = await executePresign({
+      bucketName: "documents",
+      objectKey: "notes.txt",
+      method: "DELETE",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "invalid_input",
+        message: "method must be GET, PUT, or HEAD",
+      },
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects dot segments in the signed object key", async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+
+    const result = await executePresign({ bucketName: "documents", objectKey: "a/../secret" });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "invalid_input",
+        message: "objectKey must not contain . or .. path segments",
+      },
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects a signed object key with an unpaired Unicode surrogate", async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+
+    const result = await executePresign({ bucketName: "documents", objectKey: "file\ud800" });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "invalid_input",
+        message: "objectKey must contain valid Unicode",
+      },
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects a contentType that is not a valid HTTP header value", async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+
+    const result = await executePresign({
+      bucketName: "documents",
+      objectKey: "notes.txt",
+      method: "PUT",
+      contentType: "text/plain\r\nx-evil: 1",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "invalid_input",
+        message: "contentType must be a valid HTTP header value",
+      },
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("discovers the token ID when custom-credential metadata omitted it", async () => {
+    const requests = stubJsonResponses([
+      {
+        success: true,
+        result: { id: "verified-token-id", status: "active" },
+      },
+    ]);
+
+    const result = await executePresign(
+      { bucketName: "documents", objectKey: "notes.txt", method: "GET" },
+      {
+        ...customCredential,
+        metadata: { accountId: "account-1" },
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    const url = new URL(String(readPresignedOutput(result).url));
+    expect(url.searchParams.get("X-Amz-Credential")).toMatch(/^verified-token-id\//);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url.pathname).toBe("/client/v4/user/tokens/verify");
+  });
+
+  it("falls back to account token verification after a user-token verify failure", async () => {
+    const requests = stubResponses([
+      new Response(JSON.stringify({ success: false, errors: [{ message: "not a user token" }] }), { status: 400 }),
+      new Response(JSON.stringify({ success: true, result: { id: "account-token-id", status: "active" } })),
+    ]);
+
+    const result = await executePresign(
+      { bucketName: "documents", objectKey: "notes.txt", method: "GET" },
+      {
+        ...customCredential,
+        metadata: { accountId: "account-1" },
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    const url = new URL(String(readPresignedOutput(result).url));
+    expect(url.searchParams.get("X-Amz-Credential")).toMatch(/^account-token-id\//);
+    expect(requests.map((request) => request.url.pathname)).toEqual([
+      "/client/v4/user/tokens/verify",
+      "/client/v4/accounts/account-1/tokens/verify",
+    ]);
+  });
+
+  it("rejects a token that is no longer active", async () => {
+    const requests = stubJsonResponses([
+      {
+        success: true,
+        result: { id: "verified-token-id", status: "disabled" },
+      },
+    ]);
+
+    const result = await executePresign(
+      { bucketName: "documents", objectKey: "notes.txt" },
+      {
+        ...customCredential,
+        metadata: { accountId: "account-1" },
+      },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "invalid_input",
+        message: "cloudflare token is not active: disabled",
+      },
+    });
+    expect(requests).toHaveLength(1);
+  });
+
+  it("rejects OAuth credentials without calling Cloudflare", async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+
+    const result = await executePresign({ bucketName: "documents", objectKey: "notes.txt" }, oauthCredential);
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "invalid_input",
+        message:
+          "cloudflare_r2.generate_presigned_url requires a custom API token credential. OAuth connections cannot mint R2 S3 signatures.",
+        details: {
+          status: 400,
+          details: {
+            action: "cloudflare_r2.generate_presigned_url",
+            authType: "oauth2",
+            requiredAuthType: "custom_credential",
+          },
+        },
+      },
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects expiresSeconds outside the allowed range without sending a network request", async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+
+    const result = await executePresign({
+      bucketName: "documents",
+      objectKey: "notes.txt",
+      expiresSeconds: 604801,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "invalid_input",
+        message: "expiresSeconds must be an integer between 1 and 604800",
+      },
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("Cloudflare R2 custom credential validation", () => {
+  it("stores the verified token ID so presign calls skip token verification", async () => {
+    const paths: string[] = [];
+    const responses = [
+      Response.json({ success: true, result: { buckets: [{ name: "documents" }] } }),
+      Response.json({ success: true, result: { id: "token-id-1", status: "active" } }),
+    ];
+
+    const result = await credentialValidators.customCredential!(
+      { values: { apiKey: "cf-api-token-secret", accountId: "account-1" } },
+      {
+        fetcher: async (url) => {
+          paths.push(new URL(url.toString()).pathname);
+          const response = responses.shift();
+          if (!response) {
+            throw new Error(`Unexpected Cloudflare R2 request to ${url.toString()}`);
+          }
+          return response;
+        },
+      },
+    );
+
+    expect(result).toMatchObject({
+      profile: { accountId: "account-1", displayName: "Cloudflare R2 - documents" },
+      grantedScopes: [],
+      metadata: {
+        validationEndpoint: "/accounts/account-1/r2/buckets?per_page=1",
+        accountId: "account-1",
+        firstBucketName: "documents",
+        tokenId: "token-id-1",
+        tokenStatus: "active",
+      },
+    });
+    expect(paths).toEqual(["/client/v4/accounts/account-1/r2/buckets", "/client/v4/user/tokens/verify"]);
+  });
+});
+
 function stubResponses(responses: Response[]): CapturedRequest[] {
   const requests: CapturedRequest[] = [];
   vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -154,6 +508,10 @@ function stubResponses(responses: Response[]): CapturedRequest[] {
     return response;
   });
   return requests;
+}
+
+function stubJsonResponses(payloads: unknown[]): CapturedRequest[] {
+  return stubResponses(payloads.map((payload) => new Response(JSON.stringify(payload))));
 }
 
 function createTransitFileStore(maxBytes: number): {
@@ -193,4 +551,19 @@ async function executeDownload(input: Record<string, unknown>, transitFiles?: Tr
     context.transitFiles = transitFiles;
   }
   return executors["cloudflare_r2.download_object"]!(input, context);
+}
+
+async function executePresign(input: Record<string, unknown>, credential: ResolvedCredential = customCredential) {
+  const context: ExecutionContext = {
+    getCredential: async (service) => {
+      expect(service).toBe("cloudflare_r2");
+      return credential;
+    },
+  };
+  return executors["cloudflare_r2.generate_presigned_url"]!(input, context);
+}
+
+function readPresignedOutput(result: { ok: boolean; output?: unknown }): Record<string, unknown> {
+  expect(result.output).toEqual(expect.any(Object));
+  return result.output as Record<string, unknown>;
 }
