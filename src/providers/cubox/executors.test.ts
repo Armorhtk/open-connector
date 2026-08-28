@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { cuboxActionHandlers, normalizeCuboxApiUrl } from "./executors.ts";
+import { credentialValidators, cuboxActionHandlers, normalizeCuboxApiUrl } from "./executors.ts";
 
 describe("normalizeCuboxApiUrl", () => {
   it("accepts the official Cubox API Extension URL shape", () => {
@@ -18,6 +18,20 @@ describe("normalizeCuboxApiUrl", () => {
     expect(() => normalizeCuboxApiUrl("https://cubox.pro/c/api/save/example-token?next=https://example.com")).toThrow(
       "must be a Cubox API Extension save URL",
     );
+  });
+});
+
+describe("Cubox credentials", () => {
+  it("rejects invalid API URLs before storing the credential", async () => {
+    const fetcher = vi.fn(async () => Response.json({}));
+
+    await expect(
+      credentialValidators.customCredential!(
+        { values: { apiUrl: "https://example.com/c/api/save/example-token" } },
+        { fetcher },
+      ),
+    ).rejects.toThrow("must use https://cubox.pro");
+    expect(fetcher).not.toHaveBeenCalled();
   });
 });
 

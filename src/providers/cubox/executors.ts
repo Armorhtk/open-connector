@@ -1,4 +1,4 @@
-import type { ExecutionContext, ProviderExecutors } from "../../core/types.ts";
+import type { CredentialValidators, ExecutionContext, ProviderExecutors } from "../../core/types.ts";
 import type { ProviderActionHandlers, ProviderFetch, ProviderRuntimeHandler } from "../provider-runtime.ts";
 
 import {
@@ -89,6 +89,12 @@ export const executors: ProviderExecutors = defineProviderExecutors<CuboxContext
   },
   fallbackMessage: "Cubox request failed.",
 });
+
+export const credentialValidators: CredentialValidators = {
+  async customCredential(input) {
+    normalizeCuboxApiUrl(requiredString(input.values.apiUrl, "apiUrl", providerInputError));
+  },
+};
 
 /** Normalize and restrict the secret Cubox API URL before provider egress. */
 export function normalizeCuboxApiUrl(value: string): string {
