@@ -33,6 +33,10 @@ type CuboxActionHandler = ProviderRuntimeHandler<CuboxContext>;
 
 export const cuboxActionHandlers: ProviderActionHandlers<typeof service, CuboxActionHandler> = {
   async save_url(input, context) {
+    const contentUrl = assertPublicHttpUrl(requiredString(input.url, "url", providerInputError), {
+      fieldName: "url",
+      createError: providerInputError,
+    });
     const response = await context.fetcher(context.apiUrl, {
       method: "POST",
       headers: {
@@ -43,7 +47,7 @@ export const cuboxActionHandlers: ProviderActionHandlers<typeof service, CuboxAc
       body: JSON.stringify(
         compactObject({
           type: "url",
-          content: requiredString(input.url, "url", providerInputError),
+          content: contentUrl.toString(),
           title: optionalString(input.title),
           description: optionalString(input.description),
           tags: optionalStringArray(input.tags),

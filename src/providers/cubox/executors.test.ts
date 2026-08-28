@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { cuboxActionHandlers, normalizeCuboxApiUrl } from "./executors.ts";
 
 describe("normalizeCuboxApiUrl", () => {
@@ -22,6 +22,18 @@ describe("normalizeCuboxApiUrl", () => {
 });
 
 describe("Cubox actions", () => {
+  it("rejects cloud metadata URLs before calling Cubox", async () => {
+    const fetcher = vi.fn(async () => Response.json({ code: 200 }));
+
+    await expect(
+      cuboxActionHandlers.save_url(
+        { url: "http://169.254.169.254/latest/meta-data" },
+        { apiUrl: "https://cubox.pro/c/api/save/example-token", fetcher },
+      ),
+    ).rejects.toThrow("url must not target private or reserved IP addresses");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("saves a URL with optional metadata and normalizes the successful response", async () => {
     const apiUrl = "https://cubox.pro/c/api/save/example-token";
     const fetcher: typeof fetch = async (input, init) => {
