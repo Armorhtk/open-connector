@@ -1,12 +1,21 @@
 import type { CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../../core/types.ts";
 import type { ProviderActionHandlers } from "../provider-runtime.ts";
 
-import { compactObject, optionalInteger, optionalRecord, optionalString, stringArray } from "../../core/cast.ts";
+import {
+  compactObject,
+  optionalInteger,
+  optionalRecord,
+  optionalString,
+  requiredRecord,
+  requiredString,
+  stringArray,
+} from "../../core/cast.ts";
 import {
   defineApiKeyProviderExecutors,
   defineProviderProxy,
   ProviderRequestError,
   providerUserAgent,
+  readProviderJsonBody,
 } from "../provider-runtime.ts";
 
 const service = "fal_ai";
@@ -23,7 +32,9 @@ interface FalAiRequestInput {
   apiKey: string;
   baseUrl: string;
   method?: string;
-  path: string;
+  path?: string;
+  /** Fully-qualified URL to fetch verbatim, bypassing baseUrl/path. Must already be validated. */
+  url?: string;
   query?: Record<string, string | number | string[] | undefined>;
   body?: Record<string, unknown>;
   headers?: Record<string, string>;
@@ -46,6 +57,9 @@ type FalAiRequestMode = "validate" | "execute";
 type FalAiActionHandler = (input: Record<string, unknown>, context: FalAiActionContext) => Promise<unknown>;
 
 export const falAiActionHandlers: ProviderActionHandlers<"fal_ai", FalAiActionHandler> = {
+  submit_queue_request(input, context) {
+    return falAiSubmitQueueRequest(input, context);
+  },
   get_models(input, context) {
     return falAiGetModels(input, context);
   },
@@ -211,28 +225,76 @@ async function falAiGetJwks(_input: Record<string, unknown>, context: FalAiActio
   };
 }
 
-async function falAiQueueGetStatus(input: Record<string, unknown>, context: FalAiActionContext): Promise<unknown> {
-  const payload = await falAiQueueRequest<{
-    status?: string;
-    response_url?: string | null;
-    queue_position?: number;
-    logs?: unknown[];
-  }>(
-    {
-      path: buildQueueRequestPath(input, "status"),
-      query: compactObject({
-        logs: optionalInteger(input.logs),
-      }),
-      signal: context.signal,
-    },
-    context,
+async function falAiSubmitQueueRequest(input: Record<string, unknown>, context: FalAiActionContext): Promise<unknown> {
+  const modelId = optionalString(input.modelId);
+  if (!modelId) {
+    throw new ProviderRequestError(400, "modelId is required");
+  }
+  const modelInput = optionalRecord(input.input);
+  if (!modelInput) {
+    throw new ProviderRequestError(400, "input is required");
+  }
+
+  const payload = requiredRecord(
+    await falAiQueueRequest<unknown>(
+      {
+        method: "POST",
+        path: `/${encodeFalAiModelIdPath(modelId)}`,
+        query: compactObject({
+          fal_webhook: optionalString(input.webhookUrl),
+        }),
+        body: modelInput,
+        signal: context.signal,
+      },
+      context,
+    ),
+    "fal_ai queue submission response",
+    invalidQueueResponseError,
   );
 
   return {
-    status: payload.status ?? "",
-    responseUrl: payload.response_url ?? null,
+    requestId: requiredString(payload.request_id, "fal_ai queue submission request_id", invalidQueueResponseError),
+    status: optionalString(payload.status) ?? "IN_QUEUE",
+    queuePosition: typeof payload.queue_position === "number" ? payload.queue_position : null,
+    statusUrl: requiredString(payload.status_url, "fal_ai queue submission status_url", invalidQueueResponseError),
+    responseUrl: requiredString(
+      payload.response_url,
+      "fal_ai queue submission response_url",
+      invalidQueueResponseError,
+    ),
+    cancelUrl: requiredString(payload.cancel_url, "fal_ai queue submission cancel_url", invalidQueueResponseError),
+  };
+}
+
+function invalidQueueResponseError(message: string): ProviderRequestError {
+  return new ProviderRequestError(502, message);
+}
+
+async function falAiQueueGetStatus(input: Record<string, unknown>, context: FalAiActionContext): Promise<unknown> {
+  const statusUrl = optionalString(input.statusUrl);
+  const payload = requiredRecord(
+    await falAiQueueRequest<unknown>(
+      {
+        url: statusUrl ? assertFalAiQueueUrl(statusUrl, "statusUrl").toString() : undefined,
+        path: statusUrl ? undefined : buildQueueRequestPath(input, "statusUrl", "status"),
+        query: compactObject({
+          logs: optionalInteger(input.logs),
+        }),
+        signal: context.signal,
+      },
+      context,
+    ),
+    "fal_ai queue status response",
+    invalidQueueResponseError,
+  );
+
+  return {
+    status: optionalString(payload.status) ?? "",
+    responseUrl: optionalString(payload.response_url) ?? null,
     queuePosition: typeof payload.queue_position === "number" ? payload.queue_position : null,
     logs: normalizeQueueLogs(payload.logs),
+    error: optionalString(payload.error) ?? null,
+    errorType: optionalString(payload.error_type) ?? null,
   };
 }
 
@@ -240,11 +302,13 @@ async function falAiQueueGetStatusStream(
   input: Record<string, unknown>,
   context: FalAiActionContext,
 ): Promise<unknown> {
+  const statusUrl = optionalString(input.statusUrl);
   const response = await falAiFetch(
     {
       apiKey: context.apiKey,
       baseUrl: falAiQueueApiBaseUrl,
-      path: buildQueueRequestPath(input, "status/stream"),
+      url: statusUrl ? appendFalAiQueuePathSegment(assertFalAiQueueUrl(statusUrl, "statusUrl"), "stream") : undefined,
+      path: statusUrl ? undefined : buildQueueRequestPath(input, "statusUrl", "status/stream"),
       query: compactObject({
         logs: optionalInteger(input.logs),
       }),
@@ -287,39 +351,48 @@ async function falAiGetQueueRequestResult(
   input: Record<string, unknown>,
   context: FalAiActionContext,
 ): Promise<unknown> {
-  const payload = await falAiQueueRequest<{
-    status?: string;
-    logs?: unknown[];
-    response?: unknown;
-  }>(
-    {
-      path: buildQueueRequestPath(input),
-      signal: context.signal,
-    },
-    context,
+  const responseUrl = optionalString(input.responseUrl);
+  const payload = requiredRecord(
+    await falAiQueueRequest<unknown>(
+      {
+        url: responseUrl ? assertFalAiQueueUrl(responseUrl, "responseUrl").toString() : undefined,
+        path: responseUrl ? undefined : buildQueueRequestPath(input, "responseUrl"),
+        signal: context.signal,
+      },
+      context,
+    ),
+    "fal_ai queue result response",
+    invalidQueueResponseError,
   );
 
+  // The fal queue result endpoint returns the raw, model-specific output
+  // directly (e.g. { images: [...] }), not wrapped in a status envelope. A
+  // successful response here is only ever reachable once fal reports the
+  // request COMPLETED; otherwise the endpoint responds with an error status.
   return {
-    status: payload.status ?? "",
-    logs: normalizeQueueLogs(payload.logs),
-    response: optionalRecord(payload.response) ?? {},
+    status: "COMPLETED",
+    response: payload,
   };
 }
 
 async function falAiCancelQueueRequest(input: Record<string, unknown>, context: FalAiActionContext): Promise<unknown> {
-  const payload = await falAiQueueRequest<{
-    status?: string;
-  }>(
-    {
-      method: "PUT",
-      path: buildQueueRequestPath(input, "cancel"),
-      signal: context.signal,
-    },
-    context,
+  const cancelUrl = optionalString(input.cancelUrl);
+  const payload = requiredRecord(
+    await falAiQueueRequest<unknown>(
+      {
+        method: "PUT",
+        url: cancelUrl ? assertFalAiQueueUrl(cancelUrl, "cancelUrl").toString() : undefined,
+        path: cancelUrl ? undefined : buildQueueRequestPath(input, "cancelUrl", "cancel"),
+        signal: context.signal,
+      },
+      context,
+    ),
+    "fal_ai queue cancellation response",
+    invalidQueueResponseError,
   );
 
   return {
-    status: payload.status ?? "",
+    status: optionalString(payload.status) ?? "",
   };
 }
 
@@ -337,7 +410,7 @@ async function falAiPlatformRequest<T>(
   );
 
   await assertFalAiResponse(response, mode);
-  return response.json() as Promise<T>;
+  return readFalAiJsonBody<T>(response);
 }
 
 async function falAiQueueRequest<T>(
@@ -354,11 +427,24 @@ async function falAiQueueRequest<T>(
   );
 
   await assertFalAiResponse(response, "execute");
-  return response.json() as Promise<T>;
+  return readFalAiJsonBody<T>(response);
+}
+
+/**
+ * Reads a successful fal response body, treating an empty body as `{}` so a
+ * bodyless 2xx (such as a `202` cancellation acknowledgement) does not fail
+ * with a JSON parse error.
+ */
+async function readFalAiJsonBody<T>(response: Response): Promise<T> {
+  return (await readProviderJsonBody(response, {
+    emptyBody: {},
+    invalidJsonMessage: "fal_ai returned a non-JSON response",
+    invalidJsonStatus: 502,
+  })) as T;
 }
 
 async function falAiFetch(input: FalAiRequestInput, fetcher: typeof fetch): Promise<Response> {
-  const url = new URL(`${input.baseUrl}${input.path}`);
+  const url = new URL(input.url ?? `${input.baseUrl}${input.path ?? ""}`);
   for (const [key, value] of Object.entries(input.query ?? {})) {
     if (value === undefined) {
       continue;
@@ -385,11 +471,100 @@ async function falAiFetch(input: FalAiRequestInput, fetcher: typeof fetch): Prom
   });
 }
 
-function buildQueueRequestPath(input: Record<string, unknown>, suffix?: string): string {
-  const modelId = encodeURIComponent(String(input.modelId));
-  const requestId = encodeURIComponent(String(input.requestId));
-  const basePath = `/${modelId}/requests/${requestId}`;
+/**
+ * Rebuilds the status/stream/result/cancel path for a queued request when the
+ * caller did not pass the URL fal returned from the submission.
+ */
+function buildQueueRequestPath(input: Record<string, unknown>, urlField: string, suffix?: string): string {
+  const modelId = optionalString(input.modelId);
+  const requestId = optionalString(input.requestId);
+  if (!modelId || !requestId) {
+    throw new ProviderRequestError(400, `modelId and requestId are required when ${urlField} is not provided`);
+  }
+
+  const basePath = `/${falAiQueueAppPath(modelId)}/requests/${encodeURIComponent(requestId)}`;
   return suffix ? `${basePath}/${suffix}` : basePath;
+}
+
+/**
+ * Splits a fal model ID into its `/`-separated segments, rejecting relative
+ * segments so a crafted ID cannot traverse out of the path it is spliced into.
+ */
+function falAiModelIdSegments(modelId: string): string[] {
+  const segments = modelId.split("/").filter((segment) => segment.length > 0);
+  if (segments.some((segment) => segment === "." || segment === "..")) {
+    throw new ProviderRequestError(400, "modelId must not contain . or .. path segments.");
+  }
+  return segments;
+}
+
+/**
+ * Encodes each `/`-separated segment of a fal model ID individually so
+ * literal path separators survive, instead of collapsing the whole ID into
+ * a single `%2F`-escaped segment that fal's routing will not match.
+ */
+function encodeFalAiModelIdPath(modelId: string): string {
+  return falAiModelIdSegments(modelId)
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
+/**
+ * Truncates a fal model ID to the application path its queued requests live
+ * under. Submissions accept the full endpoint ID, but the status, stream,
+ * result and cancel routes are only served under `{owner}/{alias}` (or
+ * `{namespace}/{owner}/{alias}` for the `workflows` and `comfy` namespaces);
+ * any deeper sub-path, such as the `schnell` in `fal-ai/flux/schnell`, is
+ * dropped by fal's own client and answered with a 405 when kept.
+ */
+function falAiQueueAppPath(modelId: string): string {
+  const segments = falAiModelIdSegments(modelId);
+  const expected = segments[0] === "workflows" || segments[0] === "comfy" ? 3 : 2;
+  if (segments.length < expected) {
+    throw new ProviderRequestError(400, `modelId must contain at least ${expected} path segments.`);
+  }
+
+  return segments
+    .slice(0, expected)
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
+/**
+ * Validates a status/response/cancel URL returned by a prior fal queue call
+ * before fetching it with the caller's API key, so a crafted input value
+ * cannot redirect the request (and the Authorization header) off fal's
+ * queue host. Pins the scheme to https, the host to queue.fal.run and the
+ * port to the default, and rejects embedded userinfo credentials.
+ */
+function assertFalAiQueueUrl(value: string, fieldName: string): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new ProviderRequestError(400, `${fieldName} must be a valid URL.`);
+  }
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.hostname !== "queue.fal.run" ||
+    parsed.port !== "" ||
+    parsed.username !== "" ||
+    parsed.password !== ""
+  ) {
+    throw new ProviderRequestError(400, `${fieldName} must be an https://queue.fal.run URL returned by fal.`);
+  }
+  return parsed;
+}
+
+/**
+ * Append a path segment to a validated fal queue URL's pathname, preserving
+ * its search and hash. String-concatenating a `/stream` suffix onto the
+ * whole URL would land after the query string instead of the path.
+ */
+function appendFalAiQueuePathSegment(url: URL, segment: string): string {
+  const withSegment = new URL(url);
+  withSegment.pathname = `${withSegment.pathname.replace(/\/+$/, "")}/${segment}`;
+  return withSegment.toString();
 }
 
 function normalizeStringOrArray(value: unknown): string | string[] | undefined {
@@ -484,6 +659,7 @@ async function readFalAiError(response: Response): Promise<{ detail: string | un
       detail?: unknown;
       message?: unknown;
       error?: unknown;
+      status?: unknown;
     };
 
     const detail =
@@ -492,12 +668,14 @@ async function readFalAiError(response: Response): Promise<{ detail: string | un
         : payload.detail && typeof payload.detail === "object"
           ? JSON.stringify(payload.detail)
           : undefined;
+    // Queue cancellation failures carry no message at all, only a status such
+    // as `{ "status": "ALREADY_COMPLETED" }`.
     const message =
-      typeof payload.message === "string"
-        ? payload.message
-        : typeof payload.error === "string"
-          ? payload.error
-          : (detail ?? `fal_ai request failed with ${response.status}`);
+      optionalString(payload.message) ??
+      optionalString(payload.error) ??
+      detail ??
+      optionalString(payload.status) ??
+      `fal_ai request failed with ${response.status}`;
 
     return {
       detail,

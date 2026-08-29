@@ -19,6 +19,11 @@ const falLogEntrySchema = s.object("A queue log entry.", {
   source: s.string("The log source identifier."),
   timestamp: s.string("The log timestamp in ISO 8601 format."),
 });
+const falAiQueueLifecycle = {
+  startActionId: "fal_ai.submit_queue_request",
+  statusActionId: "fal_ai.queue_get_status",
+  cancelActionId: "fal_ai.cancel_queue_request",
+};
 
 export const falAiActions: ActionDefinition[] = [
   defineProviderAction(service, {
@@ -118,18 +123,58 @@ export const falAiActions: ActionDefinition[] = [
     ),
   }),
   defineProviderAction(service, {
-    name: "queue_get_status",
+    name: "submit_queue_request",
     description:
-      "Check the status of a queued fal request, with optional log retrieval for in-progress or completed work.",
+      "Submit a job to a fal model endpoint's async queue (e.g. an image or video generation model) and return immediately with a request ID plus the status/response/cancel URLs used to track it. This is how fal.ai job generation starts; follow up with queue_get_status and get_queue_request_result to retrieve the output.",
+    followUpActions: ["fal_ai.queue_get_status", "fal_ai.get_queue_request_result", "fal_ai.cancel_queue_request"],
+    asyncLifecycle: falAiQueueLifecycle,
     inputSchema: s.object(
       "The input payload for this action.",
       {
-        modelId: s.string("The model identifier in namespace/name format."),
-        requestId: s.string("The queued request identifier."),
+        modelId: s.string("The model identifier in namespace/name format, such as fal-ai/flux/schnell."),
+        input: s.record(s.unknown("A raw model input property value."), {
+          description: "The model-specific input payload, such as { prompt: '...' } for a text-to-image model.",
+        }),
+        webhookUrl: s.string("An optional URL fal calls with the final result once the job completes."),
+      },
+      {
+        required: ["modelId", "input"],
+      },
+    ),
+    outputSchema: s.object(
+      "The output payload for this action.",
+      {
+        requestId: s.string("The submitted queue request identifier."),
+        status: s.string("The initial queue status, typically IN_QUEUE."),
+        queuePosition: s.nullable(s.integer("The current queue position when the request is still queued.")),
+        statusUrl: s.string("The exact URL to poll for this request's status. Pass this to queue_get_status."),
+        responseUrl: s.string("The exact URL to fetch this request's result. Pass this to get_queue_request_result."),
+        cancelUrl: s.string("The exact URL to cancel this request. Pass this to cancel_queue_request."),
+      },
+      {
+        required: ["requestId", "status", "statusUrl", "responseUrl", "cancelUrl"],
+      },
+    ),
+  }),
+  defineProviderAction(service, {
+    name: "queue_get_status",
+    description:
+      "Check the status of a queued fal request, with optional log retrieval for in-progress or completed work. Model IDs with a sub-path (three or more segments, e.g. fal-ai/flux/schnell) are queued under the shorter owner/alias base path; pass the statusUrl returned by submit_queue_request when you have it, otherwise the path is derived from modelId.",
+    asyncLifecycle: falAiQueueLifecycle,
+    inputSchema: s.object(
+      "The input payload for this action.",
+      {
+        modelId: s.string(
+          "The model identifier in namespace/name format. Required only when statusUrl is not supplied.",
+        ),
+        requestId: s.string("The queued request identifier. Required only when statusUrl is not supplied."),
+        statusUrl: s.string(
+          "The exact status URL returned by submit_queue_request. When provided, this is used instead of reconstructing the URL from modelId and requestId.",
+        ),
         logs: s.integer("Set to 1 to include logs in the response.", { minimum: 0, maximum: 1 }),
       },
       {
-        optional: ["logs"],
+        optional: ["modelId", "requestId", "statusUrl", "logs"],
       },
     ),
     outputSchema: s.object(
@@ -139,6 +184,14 @@ export const falAiActions: ActionDefinition[] = [
         responseUrl: s.nullable(s.string("The URL for fetching the final queued response.")),
         queuePosition: s.nullable(s.integer("The current queue position when the request is still queued.")),
         logs: s.array("The queue processing logs.", falLogEntrySchema),
+        error: s.nullable(
+          s.string(
+            "The human-readable error message; present only when the request failed; status is still COMPLETED.",
+          ),
+        ),
+        errorType: s.nullable(
+          s.string("The machine-readable error type; present only when the request failed; status is still COMPLETED."),
+        ),
       },
       {
         required: ["status"],
@@ -148,19 +201,24 @@ export const falAiActions: ActionDefinition[] = [
   defineProviderAction(service, {
     name: "queue_get_status_stream",
     description:
-      "Consume fal queue status updates as a streamed sequence of SSE events until the server closes the stream.",
+      "Consume fal queue status updates as a streamed sequence of SSE events until the server closes the stream. Model IDs with a sub-path (three or more segments, e.g. fal-ai/flux/schnell) are queued under the shorter owner/alias base path; pass the statusUrl returned by submit_queue_request when you have it, otherwise the path is derived from modelId.",
     inputSchema: s.object(
       "The input payload for this action.",
       {
-        modelId: s.string("The model identifier in namespace/name format."),
-        requestId: s.string("The queued request identifier."),
+        modelId: s.string(
+          "The model identifier in namespace/name format. Required only when statusUrl is not supplied.",
+        ),
+        requestId: s.string("The queued request identifier. Required only when statusUrl is not supplied."),
+        statusUrl: s.string(
+          "The exact status URL returned by submit_queue_request. When provided, this is used instead of reconstructing the URL from modelId and requestId.",
+        ),
         logs: s.integer("Set to 1 to include logs inside streamed updates.", {
           minimum: 0,
           maximum: 1,
         }),
       },
       {
-        optional: ["logs"],
+        optional: ["modelId", "requestId", "statusUrl", "logs"],
       },
     ),
     outputSchema: s.object(
@@ -177,40 +235,52 @@ export const falAiActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "get_queue_request_result",
-    description: "Retrieve the stored final result payload for a completed fal queued request.",
+    description:
+      "Retrieve the stored final result payload for a completed fal queued request. Model IDs with a sub-path (three or more segments, e.g. fal-ai/flux/schnell) are queued under the shorter owner/alias base path; pass the responseUrl returned by submit_queue_request when you have it, otherwise the path is derived from modelId.",
     inputSchema: s.object(
       "The input payload for this action.",
       {
-        modelId: s.string("The model identifier in namespace/name format."),
-        requestId: s.string("The queued request identifier."),
+        modelId: s.string(
+          "The model identifier in namespace/name format. Required only when responseUrl is not supplied.",
+        ),
+        requestId: s.string("The queued request identifier. Required only when responseUrl is not supplied."),
+        responseUrl: s.string(
+          "The exact response URL returned by submit_queue_request. When provided, this is used instead of reconstructing the URL from modelId and requestId.",
+        ),
       },
       {
-        required: ["modelId", "requestId"],
+        optional: ["modelId", "requestId", "responseUrl"],
       },
     ),
     outputSchema: s.object(
       "The output payload for this action.",
       {
-        status: s.string("The final request status returned by the queue API."),
-        logs: s.array("The logs captured for the queued request.", falLogEntrySchema),
+        status: s.string("The request status, always COMPLETED since fal returns the model output directly."),
         response: falObject,
       },
       {
-        required: ["status", "logs", "response"],
+        required: ["status", "response"],
       },
     ),
   }),
   defineProviderAction(service, {
     name: "cancel_queue_request",
-    description: "Request cancellation of a queued or in-progress fal request by model ID and request ID.",
+    description:
+      "Request cancellation of a queued or in-progress fal request by model ID and request ID. Model IDs with a sub-path (three or more segments, e.g. fal-ai/flux/schnell) are queued under the shorter owner/alias base path; pass the cancelUrl returned by submit_queue_request when you have it, otherwise the path is derived from modelId.",
+    asyncLifecycle: falAiQueueLifecycle,
     inputSchema: s.object(
       "The input payload for this action.",
       {
-        modelId: s.string("The model identifier in namespace/name format."),
-        requestId: s.string("The queued request identifier."),
+        modelId: s.string(
+          "The model identifier in namespace/name format. Required only when cancelUrl is not supplied.",
+        ),
+        requestId: s.string("The queued request identifier. Required only when cancelUrl is not supplied."),
+        cancelUrl: s.string(
+          "The exact cancel URL returned by submit_queue_request. When provided, this is used instead of reconstructing the URL from modelId and requestId.",
+        ),
       },
       {
-        required: ["modelId", "requestId"],
+        optional: ["modelId", "requestId", "cancelUrl"],
       },
     ),
     outputSchema: s.object(
