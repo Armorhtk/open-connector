@@ -37,4 +37,41 @@ describe("Invoice Ninja credential validation", () => {
     ).rejects.toThrow("instanceUrl must not target private or reserved IP addresses");
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("forwards the caller abort signal to the validation request", async () => {
+    setPrivateNetworkAccessAllowed(true);
+
+    const fetchMock = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      init?.signal?.throwIfAborted();
+      return Response.json({ data: { id: "company-1" } });
+    });
+
+    await expect(
+      credentialValidators.apiKey!(
+        { apiKey: "invoice-token", values: { instanceUrl: "https://10.0.0.5" } },
+        { fetcher: createProviderFetch({ fetch: fetchMock }), signal: AbortSignal.abort() },
+      ),
+    ).rejects.toThrow("Invoice Ninja request timed out");
+    expect(fetchMock.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+  });
+
+  it("maps a caller abort reason to the timeout error", async () => {
+    setPrivateNetworkAccessAllowed(true);
+
+    // A caller that aborts with its own reason makes fetch reject with that
+    // reason object, whose name is not "AbortError".
+    const signal = AbortSignal.abort(new Error("cancelled by caller"));
+    const fetchMock = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.signal?.aborted) throw init.signal.reason;
+      return Response.json({ data: { id: "company-1" } });
+    });
+
+    await expect(
+      credentialValidators.apiKey!(
+        { apiKey: "invoice-token", values: { instanceUrl: "https://10.0.0.5" } },
+        { fetcher: createProviderFetch({ fetch: fetchMock }), signal },
+      ),
+    ).rejects.toThrow("Invoice Ninja request timed out");
+    expect(fetchMock.mock.calls[0]?.[1]?.signal?.reason).toBe(signal.reason);
+  });
 });

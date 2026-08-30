@@ -2,7 +2,12 @@ import type { CredentialValidationResult } from "../../core/types.ts";
 
 import { compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
 import { assertPublicHttpUrl, isPrivateNetworkAccessAllowed } from "../../core/request.ts";
-import { createProviderTimeout, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import {
+  createProviderTimeout,
+  isAbortSignalError,
+  ProviderRequestError,
+  providerUserAgent,
+} from "../provider-runtime.ts";
 
 const defaultInstanceUrl = "https://invoicing.co";
 const apiPath = "/api/v1";
@@ -13,6 +18,7 @@ interface InvoiceNinjaInput {
   apiKey: string;
   providerMetadata: Record<string, unknown>;
   input: Record<string, unknown>;
+  signal?: AbortSignal;
 }
 type Handler = (input: InvoiceNinjaInput, fetcher: typeof fetch) => Promise<unknown>;
 
@@ -135,6 +141,7 @@ export const invoiceNinjaActionHandlers: Record<string, Handler> = {
 export async function validateInvoiceNinjaCredential(
   input: Record<string, string>,
   fetcher: typeof fetch,
+  signal?: AbortSignal,
 ): Promise<CredentialValidationResult> {
   const apiKey = input.apiKey?.trim();
   if (!apiKey) throw new ProviderRequestError(400, "apiKey is required");
@@ -146,6 +153,7 @@ export async function validateInvoiceNinjaCredential(
     method: "POST",
     phase: "validate",
     fetcher,
+    signal,
   });
   const company = unwrapEntity(payload, "company");
   const companyId = optionalString(company.id)?.trim();
@@ -207,6 +215,7 @@ async function request(
     path,
     fetcher,
     phase: "execute",
+    signal: input.signal,
     ...options,
   });
 }
@@ -221,8 +230,9 @@ async function requestJson(input: {
   query?: Record<string, unknown>;
   body?: Record<string, unknown>;
   notFound?: boolean;
+  signal?: AbortSignal;
 }) {
-  const timeout = createProviderTimeout(undefined, 30_000);
+  const timeout = createProviderTimeout(input.signal, 30_000);
   const url = new URL(`${input.apiBaseUrl}${input.path}`);
   for (const [key, value] of Object.entries(input.query ?? {})) {
     if (value !== undefined) url.searchParams.set(key, String(value));
@@ -247,7 +257,7 @@ async function requestJson(input: {
     return payload;
   } catch (error) {
     if (error instanceof ProviderRequestError) throw error;
-    if (timeout.didTimeout() || (error instanceof Error && error.name === "AbortError")) {
+    if (timeout.didTimeout() || isAbortSignalError(timeout.signal, error)) {
       throw new ProviderRequestError(504, "Invoice Ninja request timed out");
     }
     throw new ProviderRequestError(
