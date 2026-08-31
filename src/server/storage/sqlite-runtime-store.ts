@@ -24,9 +24,17 @@ import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { parseRuntimeActionHttpResult } from "../api/runtime-api.ts";
 import { PlainTextSecretCodec } from "../secrets/secret-codec-core.ts";
-import { DEFAULT_RUN_LIMIT, decodeRunLogCursor, encodeRunLogCursor } from "./runtime-store.ts";
+import {
+  listRunLogs,
+  parseJson,
+  readRunLogRow,
+  readRuntimePolicyRow,
+  readRuntimeTokenRow,
+  readString,
+  runtimeTokenColumns,
+} from "./runtime-sql.ts";
+import { DEFAULT_RUN_LIMIT } from "./runtime-store.ts";
 
-type RuntimeRow = Record<string, unknown>;
 type SecretJsonTable = "oauth_client_configs";
 const migrationDirectory = new URL("../../../migrations/", import.meta.url);
 
@@ -184,7 +192,7 @@ export class SqliteMarketplaceStore implements IMarketplaceStore {
       .all()
       .map((row) => ({
         service: readString(row, "service"),
-        enabled: (row as Record<string, unknown>).enabled === 1,
+        enabled: row.enabled === 1,
         createdAt: readString(row, "created_at"),
         updatedAt: readString(row, "updated_at"),
       }));
@@ -244,6 +252,9 @@ export class SqliteConnectionStore implements IConnectionStore {
         await this.secretCodec.encode(JSON.stringify(credential)),
         new Date().toISOString(),
       );
+    if (!row) {
+      throw new Error("Connection upsert did not return the stored row.");
+    }
     return {
       id: readString(row, "id"),
       revision: readString(row, "revision"),
@@ -385,7 +396,7 @@ export class SqliteRuntimeTokenStore implements IRuntimeTokenStore {
       .prepare(
         `
         insert into runtime_tokens (
-          id, name, token_hash, allowed_actions, blocked_actions, allowed_proxies, allowed_connections, created_at, last_used_at
+          ${runtimeTokenColumns}
         )
         values (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
@@ -407,9 +418,8 @@ export class SqliteRuntimeTokenStore implements IRuntimeTokenStore {
     return this.database
       .prepare(
         `
-        select id, name, token_hash, allowed_actions, blocked_actions, allowed_proxies, allowed_connections, created_at, last_used_at
+        select ${runtimeTokenColumns}
         from runtime_tokens
-        where revoked_at is null
         order by created_at desc, id desc
       `,
       )
@@ -421,9 +431,9 @@ export class SqliteRuntimeTokenStore implements IRuntimeTokenStore {
     const row = this.database
       .prepare(
         `
-        select id, name, token_hash, allowed_actions, blocked_actions, allowed_proxies, allowed_connections, created_at, last_used_at
+        select ${runtimeTokenColumns}
         from runtime_tokens
-        where token_hash = ? and revoked_at is null
+        where token_hash = ?
       `,
       )
       .get(tokenHash);
@@ -436,8 +446,8 @@ export class SqliteRuntimeTokenStore implements IRuntimeTokenStore {
         `
         update runtime_tokens
         set allowed_actions = ?, blocked_actions = ?, allowed_proxies = ?, allowed_connections = ?
-        where id = ? and revoked_at is null
-        returning id, name, token_hash, allowed_actions, blocked_actions, allowed_proxies, allowed_connections, created_at, last_used_at
+        where id = ?
+        returning ${runtimeTokenColumns}
       `,
       )
       .get(
@@ -456,24 +466,8 @@ export class SqliteRuntimeTokenStore implements IRuntimeTokenStore {
   }
 
   async markUsed(id: string, usedAt: string): Promise<void> {
-    this.database
-      .prepare("update runtime_tokens set last_used_at = ? where id = ? and revoked_at is null")
-      .run(usedAt, id);
+    this.database.prepare("update runtime_tokens set last_used_at = ? where id = ?").run(usedAt, id);
   }
-}
-
-function readRuntimeTokenRow(row: unknown): RuntimeTokenRecord {
-  return {
-    id: readString(row, "id"),
-    name: readString(row, "name"),
-    tokenHash: readString(row, "token_hash"),
-    allowedActions: parseJson(readString(row, "allowed_actions")),
-    blockedActions: parseJson(readString(row, "blocked_actions")),
-    allowedProxies: parseJson(readString(row, "allowed_proxies")),
-    allowedConnections: parseJson(readOptionalString(row, "allowed_connections") ?? "[]"),
-    createdAt: readString(row, "created_at"),
-    lastUsedAt: readOptionalString(row, "last_used_at"),
-  };
 }
 
 export class SqliteRuntimePolicyStore implements IRuntimePolicyStore {
@@ -485,12 +479,7 @@ export class SqliteRuntimePolicyStore implements IRuntimePolicyStore {
 
   async get(): Promise<RuntimePolicyRecord | undefined> {
     const row = this.database.prepare("select value, updated_at from runtime_policy where id = 1").get();
-    return row
-      ? {
-          rules: parseJson(readString(row, "value")),
-          updatedAt: readString(row, "updated_at"),
-        }
-      : undefined;
+    return row ? readRuntimePolicyRow(row) : undefined;
   }
 
   async set(record: RuntimePolicyRecord): Promise<void> {
@@ -542,7 +531,10 @@ export class SqliteIdempotencyStore implements IIdempotencyStore {
           where key_hash = ?
         `,
         )
-        .get(input.keyHash) as RuntimeRow;
+        .get(input.keyHash);
+      if (!row) {
+        throw new Error("Idempotency record disappeared while claiming it.");
+      }
       return { kind: "existing", row } as const;
     });
 
@@ -619,41 +611,12 @@ export class SqliteRunLogStore implements IRunLogStore {
   }
 
   async list(input: RunLogListInput = {}): Promise<RunLogPage> {
-    const limit = Math.max(1, Math.min(input.limit ?? this.limit, this.limit));
-    const cursor = decodeRunLogCursor(input.cursor);
-    const conditions: string[] = [];
-    const values: Array<string | number> = [];
-    if (cursor) {
-      conditions.push("(started_at < ? or (started_at = ? and id < ?))");
-      values.push(cursor.startedAt, cursor.startedAt, cursor.id);
-    }
-    if (input.service) {
-      conditions.push("service = ?");
-      values.push(input.service);
-    }
-    if (input.actionId) {
-      conditions.push("action_id = ?");
-      values.push(input.actionId);
-    }
-    if (input.caller) {
-      conditions.push("caller = ?");
-      values.push(input.caller);
-    }
-    if (input.ok !== undefined) {
-      conditions.push("ok = ?");
-      values.push(input.ok ? 1 : 0);
-    }
-    const where = conditions.length > 0 ? `where ${conditions.join(" and ")}` : "";
-    const rows = this.database
-      .prepare(`select service, value from runs ${where} order by started_at desc, id desc limit ?`)
-      .all(...values, limit + 1);
-    const runs = rows.map(readRunLogRow);
-    const items = runs.slice(0, limit);
-
-    return {
-      items,
-      nextCursor: runs.length > limit && items.length > 0 ? encodeRunLogCursor(items[items.length - 1]) : undefined,
-    };
+    return listRunLogs(
+      input,
+      this.limit,
+      () => "?",
+      (sql, values) => this.database.prepare(sql).all(...values),
+    );
   }
 }
 
@@ -683,11 +646,6 @@ function insertRun(database: DatabaseSync, run: RunLog): void {
       run.ok ? 1 : 0,
       JSON.stringify(run),
     );
-}
-
-function readRunLogRow(row: unknown): RunLog {
-  const run = parseJson<RunLog>(readString(row, "value"));
-  return { ...run, service: readString(row, "service") };
 }
 
 function runSqliteMigrations(database: DatabaseSync, logger?: RuntimeLogger): void {
@@ -862,7 +820,7 @@ function getStoredValue(
   keyColumn: "service",
   key: string,
 ): string | undefined {
-  const row = database.prepare(`select value from ${table} where ${keyColumn} = ?`).get(key) as RuntimeRow | undefined;
+  const row = database.prepare(`select value from ${table} where ${keyColumn} = ?`).get(key);
   return row ? readString(row, "value") : undefined;
 }
 
@@ -876,37 +834,4 @@ async function setServiceJson(input: SetServiceJsonInput): Promise<void> {
     `,
     )
     .run(input.service, await input.secretCodec.encode(JSON.stringify(input.value)), new Date().toISOString());
-}
-
-function readString(row: unknown, key: string): string {
-  if (typeof row !== "object" || row == null) {
-    throw new Error(`Expected SQLite row for ${key}.`);
-  }
-
-  const value = (row as Record<string, unknown>)[key];
-  if (typeof value !== "string") {
-    throw new Error(`Expected SQLite column ${key} to be a string.`);
-  }
-
-  return value;
-}
-
-function readOptionalString(row: unknown, key: string): string | undefined {
-  if (typeof row !== "object" || row == null) {
-    throw new Error(`Expected SQLite row for ${key}.`);
-  }
-
-  const value = (row as Record<string, unknown>)[key];
-  if (value == null) {
-    return undefined;
-  }
-  if (typeof value !== "string") {
-    throw new Error(`Expected SQLite column ${key} to be a string.`);
-  }
-
-  return value;
-}
-
-function parseJson<T>(value: string): T {
-  return JSON.parse(value) as T;
 }

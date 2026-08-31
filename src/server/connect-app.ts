@@ -1,8 +1,9 @@
 import type { CatalogStore } from "../catalog-store.ts";
 import type { ActionPolicyService } from "../core/action-policy.ts";
+import type { TransitFileUpload } from "../core/types.ts";
 import type { IProviderLoader } from "../providers/provider-loader.ts";
 import type { RuntimeJwtVerifier } from "./api/runtime-jwt.ts";
-import type { ITransitFileService, TransitFileUpload } from "./files/transit-file-store.ts";
+import type { ITransitFileService } from "./files/transit-file-store.ts";
 import type { Logger } from "./logger.ts";
 import type { ISecretCodec } from "./secrets/secret-codec-core.ts";
 import type { RuntimeDatabase } from "./storage/runtime-database.ts";
@@ -73,7 +74,6 @@ export async function createConnectApp(options: ConnectAppOptions): Promise<Conn
     connections,
     runs: options.runtimeDatabase.runLogStore,
     transitFiles: options.transitFiles,
-    actionPolicy: options.actionPolicy,
     logger: options.logger,
     marketplace,
   });

@@ -17,6 +17,7 @@ import type {
 } from "./idempotency-store.ts";
 import type { RuntimeDatabase } from "./runtime-database.ts";
 import type { IRuntimePolicyStore, RuntimePolicyRecord } from "./runtime-policy-store.ts";
+import type { RuntimeRow } from "./runtime-sql.ts";
 import type { IRunLogStore, RunLog, RunLogListInput, RunLogPage, RunLogWriteResult } from "./runtime-store.ts";
 import type { IRuntimeTokenStore, RuntimeTokenRecord } from "./runtime-token-service.ts";
 import type { PoolClient } from "pg";
@@ -25,9 +26,16 @@ import { Pool } from "pg";
 import { parseRuntimeActionHttpResult } from "../api/runtime-api.ts";
 import { PlainTextSecretCodec } from "../secrets/secret-codec-core.ts";
 import { assertPostgresSchemaReady } from "./postgres-migrations.ts";
-import { DEFAULT_RUN_LIMIT, decodeRunLogCursor, encodeRunLogCursor } from "./runtime-store.ts";
-
-type RuntimeRow = Record<string, unknown>;
+import {
+  listRunLogs,
+  parseJson,
+  readRunLogRow,
+  readRuntimePolicyRow,
+  readRuntimeTokenRow,
+  readString,
+  runtimeTokenColumns,
+} from "./runtime-sql.ts";
+import { DEFAULT_RUN_LIMIT } from "./runtime-store.ts";
 
 export interface PostgresRuntimeDatabaseOptions {
   logger?: RuntimeLogger;
@@ -412,7 +420,7 @@ class PostgresRuntimeTokenStore implements IRuntimeTokenStore {
     await this.pool.query(
       `
         insert into runtime_tokens (
-          id, name, token_hash, allowed_actions, blocked_actions, allowed_proxies, allowed_connections, created_at, last_used_at
+          ${runtimeTokenColumns}
         )
         values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       `,
@@ -432,9 +440,8 @@ class PostgresRuntimeTokenStore implements IRuntimeTokenStore {
 
   async list(): Promise<RuntimeTokenRecord[]> {
     const result = await this.pool.query<RuntimeRow>(`
-      select id, name, token_hash, allowed_actions, blocked_actions, allowed_proxies, allowed_connections, created_at, last_used_at
+      select ${runtimeTokenColumns}
       from runtime_tokens
-      where revoked_at is null
       order by created_at desc, id desc
     `);
     return result.rows.map(readRuntimeTokenRow);
@@ -443,9 +450,9 @@ class PostgresRuntimeTokenStore implements IRuntimeTokenStore {
   async findByHash(tokenHash: string): Promise<RuntimeTokenRecord | undefined> {
     const result = await this.pool.query<RuntimeRow>(
       `
-        select id, name, token_hash, allowed_actions, blocked_actions, allowed_proxies, allowed_connections, created_at, last_used_at
+        select ${runtimeTokenColumns}
         from runtime_tokens
-        where token_hash = $1 and revoked_at is null
+        where token_hash = $1
       `,
       [tokenHash],
     );
@@ -458,8 +465,8 @@ class PostgresRuntimeTokenStore implements IRuntimeTokenStore {
       `
         update runtime_tokens
         set allowed_actions = $1, blocked_actions = $2, allowed_proxies = $3, allowed_connections = $4
-        where id = $5 and revoked_at is null
-        returning id, name, token_hash, allowed_actions, blocked_actions, allowed_proxies, allowed_connections, created_at, last_used_at
+        where id = $5
+        returning ${runtimeTokenColumns}
       `,
       [
         JSON.stringify(policy.allowedActions),
@@ -479,10 +486,7 @@ class PostgresRuntimeTokenStore implements IRuntimeTokenStore {
   }
 
   async markUsed(id: string, usedAt: string): Promise<void> {
-    await this.pool.query("update runtime_tokens set last_used_at = $1 where id = $2 and revoked_at is null", [
-      usedAt,
-      id,
-    ]);
+    await this.pool.query("update runtime_tokens set last_used_at = $1 where id = $2", [usedAt, id]);
   }
 }
 
@@ -496,12 +500,7 @@ class PostgresRuntimePolicyStore implements IRuntimePolicyStore {
   async get(): Promise<RuntimePolicyRecord | undefined> {
     const result = await this.pool.query<RuntimeRow>("select value, updated_at from runtime_policy where id = 1");
     const row = result.rows[0];
-    return row
-      ? {
-          rules: parseJson(readString(row, "value")),
-          updatedAt: readString(row, "updated_at"),
-        }
-      : undefined;
+    return row ? readRuntimePolicyRow(row) : undefined;
   }
 
   async set(record: RuntimePolicyRecord): Promise<void> {
@@ -650,86 +649,13 @@ class PostgresRunLogStore implements IRunLogStore {
   }
 
   async list(input: RunLogListInput = {}): Promise<RunLogPage> {
-    const limit = Math.max(1, Math.min(input.limit ?? this.limit, this.limit));
-    const cursor = decodeRunLogCursor(input.cursor);
-    const conditions: string[] = [];
-    const values: Array<string | number> = [];
-    if (cursor) {
-      const startedAtParameter = values.push(cursor.startedAt);
-      const repeatedStartedAtParameter = values.push(cursor.startedAt);
-      const idParameter = values.push(cursor.id);
-      conditions.push(
-        `(started_at < $${startedAtParameter} or (started_at = $${repeatedStartedAtParameter} and id < $${idParameter}))`,
-      );
-    }
-    if (input.service) {
-      conditions.push(`service = $${values.push(input.service)}`);
-    }
-    if (input.actionId) {
-      conditions.push(`action_id = $${values.push(input.actionId)}`);
-    }
-    if (input.caller) {
-      conditions.push(`caller = $${values.push(input.caller)}`);
-    }
-    if (input.ok !== undefined) {
-      conditions.push(`ok = $${values.push(input.ok ? 1 : 0)}`);
-    }
-    const where = conditions.length > 0 ? `where ${conditions.join(" and ")}` : "";
-    const limitParameter = values.push(limit + 1);
-    const result = await this.pool.query<RuntimeRow>(
-      `select service, value from runs ${where} order by started_at desc, id desc limit $${limitParameter}`,
-      values,
+    return listRunLogs(
+      input,
+      this.limit,
+      (position) => `$${position}`,
+      async (sql, values) => (await this.pool.query<RuntimeRow>(sql, values)).rows,
     );
-    const runs = result.rows.map(readRunLogRow);
-    const items = runs.slice(0, limit);
-
-    return {
-      items,
-      nextCursor: runs.length > limit && items.length > 0 ? encodeRunLogCursor(items[items.length - 1]) : undefined,
-    };
   }
-}
-
-function readRuntimeTokenRow(row: RuntimeRow): RuntimeTokenRecord {
-  return {
-    id: readString(row, "id"),
-    name: readString(row, "name"),
-    tokenHash: readString(row, "token_hash"),
-    allowedActions: parseJson(readString(row, "allowed_actions")),
-    blockedActions: parseJson(readString(row, "blocked_actions")),
-    allowedProxies: parseJson(readString(row, "allowed_proxies")),
-    allowedConnections: parseJson(readOptionalString(row, "allowed_connections") ?? "[]"),
-    createdAt: readString(row, "created_at"),
-    lastUsedAt: readOptionalString(row, "last_used_at"),
-  };
-}
-
-function readRunLogRow(row: RuntimeRow): RunLog {
-  const run = parseJson<RunLog>(readString(row, "value"));
-  return { ...run, service: readString(row, "service") };
-}
-
-function readString(row: RuntimeRow, key: string): string {
-  const value = row[key];
-  if (typeof value !== "string") {
-    throw new Error(`Expected PostgreSQL column ${key} to be a string.`);
-  }
-  return value;
-}
-
-function readOptionalString(row: RuntimeRow, key: string): string | undefined {
-  const value = row[key];
-  if (value == null) {
-    return undefined;
-  }
-  if (typeof value !== "string") {
-    throw new Error(`Expected PostgreSQL column ${key} to be a string.`);
-  }
-  return value;
-}
-
-function parseJson<T>(value: string): T {
-  return JSON.parse(value) as T;
 }
 
 async function runInTransaction<T>(pool: Pool, work: (client: PoolClient) => Promise<T>): Promise<T> {

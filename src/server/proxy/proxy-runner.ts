@@ -1,6 +1,6 @@
 import type { CatalogStore } from "../../catalog-store.ts";
 import type { ConnectionService } from "../../connection-service.ts";
-import type { ActionPolicyService, ActionPolicySnapshot } from "../../core/action-policy.ts";
+import type { ActionPolicySnapshot } from "../../core/action-policy.ts";
 import type { ProviderProxyExecutor, ProxyRequestInput, ProxyResponse } from "../../core/types.ts";
 import type { IProviderLoader } from "../../providers/provider-loader.ts";
 import type { Logger } from "../logger.ts";
@@ -15,7 +15,6 @@ export interface ProxyRunnerOptions {
   catalog: CatalogStore;
   providerLoader: IProviderLoader;
   connections: ConnectionService;
-  actionPolicy?: ActionPolicyService;
   logger?: Logger;
 }
 
@@ -23,7 +22,7 @@ export interface RunProxyInput {
   service: string;
   input: unknown;
   connectionName?: string;
-  policy?: ActionPolicySnapshot;
+  policy: ActionPolicySnapshot;
 }
 
 export type ProxyRunResult =
@@ -67,9 +66,8 @@ export class ProxyRunner {
       };
     }
 
-    const snapshot = input.policy ?? this.options.actionPolicy?.createSnapshot();
-    const decision = snapshot?.evaluateProxy(provider.service);
-    if (decision && !decision.allowed) {
+    const decision = input.policy.evaluateProxy(provider.service);
+    if (!decision.allowed) {
       return {
         ok: false,
         status: 403,
@@ -116,7 +114,7 @@ export class ProxyRunner {
     try {
       const connection = await this.options.connections.getConnectionSummary(provider.service, input.connectionName);
       const connectionDecision =
-        connection?.authType === "no_auth" ? undefined : snapshot?.evaluateConnection(connection?.id);
+        connection?.authType === "no_auth" ? undefined : input.policy.evaluateConnection(connection?.id);
       if (connectionDecision && !connectionDecision.allowed) {
         return {
           ok: false,
@@ -156,7 +154,7 @@ export class ProxyRunner {
       const durationMs = Date.now() - startedAtMs;
       if (error instanceof ConnectionError) {
         const missingConnectionDecision =
-          error.code === "connection_not_found" ? snapshot?.evaluateConnection() : undefined;
+          error.code === "connection_not_found" ? input.policy.evaluateConnection() : undefined;
         if (missingConnectionDecision && !missingConnectionDecision.allowed) {
           return {
             ok: false,

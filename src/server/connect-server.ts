@@ -1,13 +1,14 @@
 import type { CatalogStore, RuntimeActionDefinition } from "../catalog-store.ts";
 import type { ConnectionService, ConnectionSummary } from "../connection-service.ts";
 import type { ActionPolicySnapshot } from "../core/action-policy.ts";
-import type { ActionSearchIndexProvider, ActionSearchResult } from "../core/action-search.ts";
+import type { ActionSearchDocument, ActionSearchIndexProvider } from "../core/action-search.ts";
+import type { TransitFileUpload } from "../core/types.ts";
 import type { MarketplaceConfigInput, MarketplaceService } from "../marketplace/marketplace-service.ts";
 import type { OAuthClientConfigInput } from "../oauth/oauth-client-config-service.ts";
 import type { IProviderLoader } from "../providers/provider-loader.ts";
 import type { LocalAuthOptions } from "./api/auth.ts";
 import type { RuntimeActionHttpResult } from "./api/runtime-api.ts";
-import type { ITransitFileService, TransitFileUpload } from "./files/transit-file-store.ts";
+import type { ITransitFileService } from "./files/transit-file-store.ts";
 import type { Logger } from "./logger.ts";
 import type { IIdempotencyStore } from "./storage/idempotency-store.ts";
 import type { IRuntimePolicyStore } from "./storage/runtime-policy-store.ts";
@@ -55,7 +56,7 @@ import {
   writeRuntimeFailure,
   writeRuntimeSuccess,
 } from "./api/runtime-api.ts";
-import { createTransitFileResponse, TransitFileError } from "./files/transit-file-store.ts";
+import { TransitFileError } from "./files/transit-file-store.ts";
 import { ProxyRunner } from "./proxy/proxy-runner.ts";
 import { decodeRunLogCursor } from "./storage/runtime-store.ts";
 import { summarizeRuntimeToken } from "./storage/runtime-token-service.ts";
@@ -74,7 +75,6 @@ export interface IConnectServerOptions {
   idempotency: IIdempotencyStore;
   transitFiles: ITransitFileService;
   uploadTransitFile?: (request: Request) => Promise<TransitFileUpload>;
-  staticRoot?: string;
   auth?: LocalAuthOptions;
   actionPolicy?: ActionPolicyService;
   runtimePolicyStore: IRuntimePolicyStore;
@@ -104,7 +104,6 @@ export class ConnectServer {
       catalog: options.catalog,
       providerLoader: options.providerLoader,
       connections: options.connections,
-      actionPolicy: this.actionPolicy,
       logger: options.logger,
     });
   }
@@ -329,12 +328,7 @@ export class ConnectServer {
 
   private async getTransitFile(context: Context, fileId: string): Promise<Response> {
     try {
-      if (this.options.transitFiles.response) {
-        return await this.options.transitFiles.response(fileId);
-      }
-
-      const file = await this.options.transitFiles.read(fileId);
-      return createTransitFileResponse(file);
+      return await this.options.transitFiles.response(fileId);
     } catch (error) {
       return this.handleTransitFileError(context, error);
     }
@@ -407,7 +401,6 @@ export class ConnectServer {
       return context.text(
         renderActionMarkdown(action, {
           connection: await this.options.connections.getConnectionSummary(action.service, readConnectionName(context)),
-          providerPermissions: action.providerPermissions,
           policy,
         }),
         200,
@@ -484,7 +477,7 @@ export class ConnectServer {
     return writeRuntimeSuccess(context, await this.serializeSearchResults(results));
   }
 
-  private async serializeSearchResults(results: ActionSearchResult[]): Promise<RuntimeActionSearchResult[]> {
+  private async serializeSearchResults(results: ActionSearchDocument[]): Promise<RuntimeActionSearchResult[]> {
     const authenticated = new Set(
       await this.options.connections.listAuthenticatedServices([...new Set(results.map((result) => result.service))]),
     );
@@ -800,10 +793,8 @@ export class ConnectServer {
       () =>
         createMcpServer({
           catalog: this.options.catalog,
-          providerLoader: this.options.providerLoader,
           connections: this.options.connections,
           actions: this.options.actions,
-          actionPolicy: this.actionPolicy,
           actionSearch: this.actionSearch,
           getPolicySnapshot: () => this.getPolicySnapshot(context),
           runtimeGrant: readRuntimeGrant(context),
@@ -1303,7 +1294,7 @@ interface RuntimeActionSearchResult {
 }
 
 function serializeActionSearchResult(
-  result: ActionSearchResult,
+  result: ActionSearchDocument,
   action: RuntimeActionDefinition,
   authenticated: boolean,
 ): RuntimeActionSearchResult {

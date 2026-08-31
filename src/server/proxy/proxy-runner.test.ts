@@ -34,6 +34,7 @@ const credential: Extract<ResolvedCredential, { authType: "api_key" }> = {
 };
 const connectionId = "11111111-1111-4111-8111-111111111111";
 const otherConnectionId = "22222222-2222-4222-8222-222222222222";
+const openPolicy = new ActionPolicyService().createSnapshot();
 
 describe("ProxyRunner", () => {
   it("returns proxy_not_supported before resolving credentials when the provider has no proxy executor", async () => {
@@ -47,6 +48,7 @@ describe("ProxyRunner", () => {
       runner.run({
         service: "example",
         input: null,
+        policy: openPolicy,
       }),
     ).resolves.toMatchObject({
       ok: false,
@@ -60,7 +62,6 @@ describe("ProxyRunner", () => {
     const loadProxyExecutor = vi.fn();
     const connections = createConnections();
     const runner = createRunner({
-      actionPolicy: new ActionPolicyService({ allowedProxies: ["other"] }),
       connections,
       providerLoader: {
         loadActionExecutor: async () => undefined,
@@ -73,6 +74,7 @@ describe("ProxyRunner", () => {
       runner.run({
         service: "example",
         input: { endpoint: "/items", method: "GET" },
+        policy: new ActionPolicyService({ allowedProxies: ["other"] }).createSnapshot(),
       }),
     ).resolves.toMatchObject({
       ok: false,
@@ -87,7 +89,6 @@ describe("ProxyRunner", () => {
     const loadProxyExecutor = vi.fn();
     const actionPolicy = new ActionPolicyService({ allowedProxies: ["example"] });
     const runner = createRunner({
-      actionPolicy,
       providerLoader: {
         loadActionExecutor: async () => undefined,
         loadCredentialValidators: async () => undefined,
@@ -117,7 +118,6 @@ describe("ProxyRunner", () => {
     const loadProxyExecutor = vi.fn();
     const actionPolicy = new ActionPolicyService({ allowedProxies: ["example"] });
     const runner = createRunner({
-      actionPolicy,
       providerLoader: {
         loadActionExecutor: async () => undefined,
         loadCredentialValidators: async () => undefined,
@@ -154,7 +154,6 @@ describe("ProxyRunner", () => {
     const connections = createConnections();
     const actionPolicy = new ActionPolicyService({ allowedProxies: ["example"] });
     const runner = createRunner({
-      actionPolicy,
       connections,
       providerLoader: {
         loadActionExecutor: async () => undefined,
@@ -202,7 +201,6 @@ describe("ProxyRunner", () => {
     );
     const actionPolicy = new ActionPolicyService({ allowedProxies: ["example"] });
     const runner = createRunner({
-      actionPolicy,
       providerLoader: new TestProviderLoader(proxy),
     });
 
@@ -244,7 +242,6 @@ describe("ProxyRunner", () => {
     );
     const actionPolicy = new ActionPolicyService({ allowedProxies: ["example"] });
     const runner = createRunner({
-      actionPolicy,
       provider: { ...provider, authTypes: ["no_auth"], auth: [{ type: "no_auth" }] },
       connections: createConnections({
         getConnectionSummary: async () => ({
@@ -284,7 +281,6 @@ describe("ProxyRunner", () => {
     );
     const actionPolicy = new ActionPolicyService({ allowedProxies: ["example"] });
     const runner = createRunner({
-      actionPolicy,
       provider: {
         ...provider,
         authTypes: ["no_auth", "api_key"],
@@ -316,10 +312,6 @@ describe("ProxyRunner", () => {
       }),
     );
     const runner = createRunner({
-      actionPolicy: new ActionPolicyService({
-        allowedActions: ["example.echo"],
-        allowedProxies: ["example"],
-      }),
       providerLoader: new TestProviderLoader(proxy),
     });
 
@@ -327,6 +319,10 @@ describe("ProxyRunner", () => {
       runner.run({
         service: "example",
         input: { endpoint: "/items", method: "GET" },
+        policy: new ActionPolicyService({
+          allowedActions: ["example.echo"],
+          allowedProxies: ["example"],
+        }).createSnapshot(),
       }),
     ).resolves.toMatchObject({
       ok: true,
@@ -346,6 +342,7 @@ describe("ProxyRunner", () => {
       runner.run({
         service: "example",
         input: { endpoint: "https://evil.test/a", method: "GET" },
+        policy: openPolicy,
       }),
     ).resolves.toMatchObject({
       ok: false,
@@ -375,7 +372,9 @@ describe("ProxyRunner", () => {
       "/http://169.254.169.254/latest/meta-data/",
       "/http:/169.254.169.254/",
     ]) {
-      await expect(runner.run({ service: "example", input: { endpoint, method: "GET" } })).resolves.toMatchObject({
+      await expect(
+        runner.run({ service: "example", input: { endpoint, method: "GET" }, policy: openPolicy }),
+      ).resolves.toMatchObject({
         ok: false,
         status: 400,
         errorCode: "invalid_input",
@@ -407,6 +406,7 @@ describe("ProxyRunner", () => {
         service: "example",
         connectionName: "work",
         input: { endpoint: "/items", method: "post", query: { limit: 1 } },
+        policy: openPolicy,
       }),
     ).resolves.toEqual({
       ok: true,
@@ -445,6 +445,7 @@ describe("ProxyRunner", () => {
       runner.run({
         service: "example",
         input: { endpoint: "/items", method: "HEAD" },
+        policy: openPolicy,
       }),
     ).resolves.toMatchObject({
       ok: true,
@@ -472,6 +473,7 @@ describe("ProxyRunner", () => {
       runner.run({
         service: "example",
         input: { endpoint: "/items", method: "GET", body: { ignored: true } },
+        policy: openPolicy,
       }),
     ).resolves.toMatchObject({
       ok: false,
@@ -495,6 +497,7 @@ describe("ProxyRunner", () => {
       runner.run({
         service: "example",
         input: { endpoint: "/items", method: "POST", [field]: "not-an-object" },
+        policy: openPolicy,
       }),
     ).resolves.toMatchObject({
       ok: false,
@@ -516,6 +519,7 @@ describe("ProxyRunner", () => {
       runner.run({
         service: "example",
         input: { endpoint: "/items", method: "GET" },
+        policy: openPolicy,
       }),
     ).resolves.toEqual({
       ok: false,
@@ -541,6 +545,7 @@ describe("ProxyRunner", () => {
       runner.run({
         service: "example",
         input: { endpoint: "/items", method: "GET" },
+        policy: openPolicy,
       }),
     ).resolves.toMatchObject({
       ok: false,
@@ -569,6 +574,7 @@ describe("ProxyRunner", () => {
     await runner.run({
       service: "example",
       input: { endpoint: "/items?access_token=secret", method: "GET" },
+      policy: openPolicy,
     });
 
     expect(info).toHaveBeenCalledWith(
@@ -599,6 +605,7 @@ describe("ProxyRunner", () => {
         service: "example",
         connectionName: "work",
         input: { endpoint: "/items", method: "GET" },
+        policy: openPolicy,
       }),
     ).resolves.toMatchObject({
       ok: false,
@@ -623,6 +630,7 @@ describe("ProxyRunner", () => {
       runner.run({
         service: "example",
         input: { endpoint: "/items", method: "GET" },
+        policy: openPolicy,
       }),
     ).resolves.toMatchObject({
       ok: false,
@@ -648,6 +656,7 @@ describe("ProxyRunner", () => {
       runner.run({
         service: "example",
         input: { endpoint: "/items", method: "GET" },
+        policy: openPolicy,
       }),
     ).resolves.toMatchObject({
       ok: false,
@@ -659,7 +668,6 @@ describe("ProxyRunner", () => {
 });
 
 function createRunner(input: {
-  actionPolicy?: ActionPolicyService;
   connections?: ConnectionService;
   logger?: Logger;
   provider?: ProviderDefinition;
@@ -667,7 +675,6 @@ function createRunner(input: {
 }): ProxyRunner {
   return new ProxyRunner({
     catalog: { providers: [input.provider ?? provider] } as CatalogStore,
-    actionPolicy: input.actionPolicy,
     connections: input.connections ?? createConnections(),
     logger: input.logger,
     providerLoader: input.providerLoader,

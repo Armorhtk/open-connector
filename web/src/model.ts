@@ -279,10 +279,7 @@ const recommendedProviderServices = [
   "stripe",
   "googleanalytics",
   "googlesearchconsole",
-  "facebookleadads",
-  "metaads",
   "linkedin",
-  "salesforce",
   "pipedrive",
   "zendesk",
   "intercom",
@@ -473,13 +470,6 @@ function compactProviderService(service: string): string {
     .replace(/\s+/g, "");
 }
 
-export function firstProviderByConnectionStatus(
-  providers: ProviderDefinition[],
-  connections: ConnectionRecord[],
-): ProviderDefinition | undefined {
-  return sortProviders(providers, new Map(connections.map((connection) => [connection.service, connection])))[0];
-}
-
 export function filterActions(actions: ActionDefinition[], query: string, service: string | null): ActionDefinition[] {
   const normalized = query.trim().toLowerCase();
   return actions.filter((action) => {
@@ -559,8 +549,10 @@ export function compactJson(value: unknown): string {
   return text.length > 120 ? `${text.slice(0, 117)}...` : text;
 }
 
+// These mirror src/core/json-schema.ts (readSchemaProperties/readSchemaRequired/describeSchemaType) and must be
+// kept in sync by hand because the web build cannot import src/.
 function readProperties(schema: JsonSchema): Record<string, JsonSchema> {
-  return schema.properties && typeof schema.properties === "object"
+  return schema.properties && typeof schema.properties === "object" && !Array.isArray(schema.properties)
     ? (schema.properties as Record<string, JsonSchema>)
     : {};
 }
