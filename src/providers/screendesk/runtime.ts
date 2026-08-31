@@ -1,9 +1,10 @@
-import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
 import {
   createProviderTimeout,
   isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
+  requiredInputString,
 } from "../provider-runtime.ts";
 
 export const screendeskApiBaseUrl = "https://app.screendesk.io/api/v2";
@@ -146,8 +147,4 @@ function readScreendeskErrorMessage(payload: unknown): string | undefined {
   if (!record) return undefined;
   if (typeof record.error === "string") return record.error;
   return optionalString(optionalRecord(record.error)?.message) ?? optionalString(record.message);
-}
-
-function requiredInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }

@@ -3,7 +3,12 @@ import type { ProviderActionHandlers } from "../provider-runtime.ts";
 import type { ProviderRuntimeHandler } from "../provider-runtime.ts";
 
 import { compactObject, optionalBoolean, optionalRecord, optionalString } from "../../core/cast.ts";
-import { createProviderTimeout, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+import {
+  createProviderTimeout,
+  providerUserAgent,
+  ProviderRequestError,
+  requiredResponseRecord,
+} from "../provider-runtime.ts";
 
 export type StannpRegion = "eu" | "us";
 
@@ -24,7 +29,7 @@ const stannpBaseUrlByRegion: Record<StannpRegion, string> = {
 export const stannpActionHandlers: ProviderActionHandlers<"stannp", ProviderRuntimeHandler<StannpActionContext>> = {
   async get_account_balance(_input, context) {
     const data = await stannpGetJson("/v1/accounts/balance", {}, context, "execute");
-    const payload = objectFromStannp(data, "stannp account balance response data");
+    const payload = requiredResponseRecord(data, "stannp account balance response data");
     return {
       balance: stringFrom(payload.balance),
       raw: data,
@@ -50,13 +55,13 @@ export const stannpActionHandlers: ProviderActionHandlers<"stannp", ProviderRunt
     const recipientId = readPathId(input.recipientId, "recipientId");
     const data = await stannpGetJson(`/v1/recipients/get/${encodeURIComponent(recipientId)}`, {}, context, "execute");
     return {
-      recipient: objectFromStannp(data, "stannp recipient response data"),
+      recipient: requiredResponseRecord(data, "stannp recipient response data"),
       raw: data,
     };
   },
   async create_recipient(input, context) {
     const data = await stannpPostForm("/v1/recipients/new", recipientFormFields(input), context, "execute");
-    const payload = objectFromStannp(data, "stannp recipient creation response data");
+    const payload = requiredResponseRecord(data, "stannp recipient creation response data");
     return {
       recipientId: stringFrom(payload.id),
       valid: nullableBoolean(payload.valid),
@@ -87,12 +92,7 @@ export const stannpActionHandlers: ProviderActionHandlers<"stannp", ProviderRunt
     };
   },
   async create_group(input, context) {
-    const data = await stannpPostForm(
-      "/v1/groups/new",
-      { name: readOptionalTrimmedString(input.name) },
-      context,
-      "execute",
-    );
+    const data = await stannpPostForm("/v1/groups/new", { name: optionalString(input.name) }, context, "execute");
     return {
       groupId: stringFrom(data),
       raw: data,
@@ -143,21 +143,21 @@ export const stannpActionHandlers: ProviderActionHandlers<"stannp", ProviderRunt
     const data = await stannpPostForm(
       "/v1/addresses/validate",
       compactObject({
-        company: readOptionalTrimmedString(input.company),
-        address1: readOptionalTrimmedString(input.address1),
-        address2: readOptionalTrimmedString(input.address2),
-        address3: readOptionalTrimmedString(input.address3),
-        city: readOptionalTrimmedString(input.city),
-        postcode: readOptionalTrimmedString(input.postcode),
-        country: readOptionalTrimmedString(input.country),
-        state: readOptionalTrimmedString(input.state),
-        province: readOptionalTrimmedString(input.province),
-        zipcode: readOptionalTrimmedString(input.zipcode),
+        company: optionalString(input.company),
+        address1: optionalString(input.address1),
+        address2: optionalString(input.address2),
+        address3: optionalString(input.address3),
+        city: optionalString(input.city),
+        postcode: optionalString(input.postcode),
+        country: optionalString(input.country),
+        state: optionalString(input.state),
+        province: optionalString(input.province),
+        zipcode: optionalString(input.zipcode),
       }),
       context,
       "execute",
     );
-    const address = objectFromStannp(data, "stannp address validation response data");
+    const address = requiredResponseRecord(data, "stannp address validation response data");
     return {
       isValid: booleanFromStannp(address.is_valid),
       address,
@@ -190,7 +190,7 @@ export async function validateStannpCredential(
   const region = readStannpRegion(regionInput);
   const apiBaseUrl = buildStannpApiBaseUrl(region);
   const data = await stannpGetJson("/v1/accounts/balance", {}, { apiKey, region, fetcher, signal }, "validate");
-  const balance = stringFrom(objectFromStannp(data, "stannp account balance response data").balance);
+  const balance = stringFrom(requiredResponseRecord(data, "stannp account balance response data").balance);
   return {
     profile: {
       accountId: `stannp:${region}`,
@@ -354,21 +354,21 @@ function appendFormField(body: URLSearchParams, key: string, value: unknown): vo
 function recipientFormFields(input: Record<string, unknown>): Record<string, unknown> {
   const fields: Record<string, unknown> = compactObject({
     group_id: input.groupId,
-    title: readOptionalTrimmedString(input.title),
-    firstname: readOptionalTrimmedString(input.firstname),
-    lastname: readOptionalTrimmedString(input.lastname),
-    company: readOptionalTrimmedString(input.company),
-    job_title: readOptionalTrimmedString(input.jobTitle),
-    address1: readOptionalTrimmedString(input.address1),
-    address2: readOptionalTrimmedString(input.address2),
-    address3: readOptionalTrimmedString(input.address3),
-    city: readOptionalTrimmedString(input.city),
-    county: readOptionalTrimmedString(input.county),
-    postcode: readOptionalTrimmedString(input.postcode),
-    country: readOptionalTrimmedString(input.country),
-    email: readOptionalTrimmedString(input.email),
-    phone_number: readOptionalTrimmedString(input.phoneNumber),
-    ref_id: readOptionalTrimmedString(input.refId),
+    title: optionalString(input.title),
+    firstname: optionalString(input.firstname),
+    lastname: optionalString(input.lastname),
+    company: optionalString(input.company),
+    job_title: optionalString(input.jobTitle),
+    address1: optionalString(input.address1),
+    address2: optionalString(input.address2),
+    address3: optionalString(input.address3),
+    city: optionalString(input.city),
+    county: optionalString(input.county),
+    postcode: optionalString(input.postcode),
+    country: optionalString(input.country),
+    email: optionalString(input.email),
+    phone_number: optionalString(input.phoneNumber),
+    ref_id: optionalString(input.refId),
     on_duplicate: input.onDuplicate,
     test_level: input.testLevel,
   });
@@ -394,15 +394,7 @@ function arrayFrom(value: unknown, fieldName: string): Array<Record<string, unkn
   if (!Array.isArray(value)) {
     throw new ProviderRequestError(502, `${fieldName} must be an array`);
   }
-  return value.map((item) => objectFromStannp(item, fieldName));
-}
-
-function objectFromStannp(value: unknown, fieldName: string): Record<string, unknown> {
-  const record = optionalRecord(value);
-  if (!record) {
-    throw new ProviderRequestError(502, `${fieldName} must be an object`);
-  }
-  return record;
+  return value.map((item) => requiredResponseRecord(item, fieldName));
 }
 
 function readPathId(value: unknown, fieldName: string): string {
@@ -457,8 +449,4 @@ function booleanFromStannp(value: unknown): boolean {
     return normalized === "1" || normalized === "true" || normalized === "yes";
   }
   return false;
-}
-
-function readOptionalTrimmedString(value: unknown): string | undefined {
-  return optionalString(value);
 }

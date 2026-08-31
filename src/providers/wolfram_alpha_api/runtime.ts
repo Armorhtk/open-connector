@@ -2,12 +2,13 @@ import type { CredentialValidationResult } from "../../core/types.ts";
 import type { ProviderActionHandlers } from "../provider-runtime.ts";
 import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
 
-import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { compactObject, optionalRecord, optionalString } from "../../core/cast.ts";
 import {
   createProviderTimeout,
   isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
+  requiredInputString,
 } from "../provider-runtime.ts";
 
 export const wolframAlphaApiBaseUrl = "https://api.wolframalpha.com";
@@ -31,7 +32,7 @@ export const wolframAlphaApiActionHandlers: ProviderActionHandlers<
   ProviderRuntimeHandler<ApiKeyProviderContext>
 > = {
   async validate_query(input, context): Promise<unknown> {
-    const query = requiredProviderString(input.query, "query");
+    const query = requiredInputString(input.query, "query");
     const mode = readMode(input.mode);
     const result = await executeRecognizerQuery(
       context.apiKey,
@@ -53,13 +54,13 @@ export const wolframAlphaApiActionHandlers: ProviderActionHandlers<
     };
   },
   async get_short_answer(input, context): Promise<unknown> {
-    const query = requiredProviderString(input.query, "query");
+    const query = requiredInputString(input.query, "query");
     const answer = await executeTextQuery(
       "/v1/result",
       context.apiKey,
       {
         i: query,
-        units: readOptionalString(input.units),
+        units: optionalString(input.units),
         timeout: readOptionalTimeout(input.timeout),
       },
       context.fetcher,
@@ -69,13 +70,13 @@ export const wolframAlphaApiActionHandlers: ProviderActionHandlers<
     return { query, answer };
   },
   async get_spoken_result(input, context): Promise<unknown> {
-    const query = requiredProviderString(input.query, "query");
+    const query = requiredInputString(input.query, "query");
     const result = await executeTextQuery(
       "/v1/spoken",
       context.apiKey,
       {
         i: query,
-        units: readOptionalString(input.units),
+        units: optionalString(input.units),
         timeout: readOptionalTimeout(input.timeout),
       },
       context.fetcher,
@@ -236,14 +237,6 @@ function createWolframAlphaError(status: number, body: string, phase: WolframAlp
 
 function createWolframAlphaCredentialError(message: string, phase: WolframAlphaPhase): ProviderRequestError {
   return new ProviderRequestError(phase === "validate" ? 400 : 401, message);
-}
-
-function requiredProviderString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
-}
-
-function readOptionalString(value: unknown): string | undefined {
-  return optionalString(value);
 }
 
 function readOptionalTimeout(value: unknown): string | undefined {

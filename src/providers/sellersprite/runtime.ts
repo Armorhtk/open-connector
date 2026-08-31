@@ -2,7 +2,7 @@ import type { CredentialValidationResult, ExecutionResult } from "../../core/typ
 import type { ProviderActionHandlers } from "../provider-runtime.ts";
 import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
 
-import { compactObject, optionalRecord, optionalString, requiredString, requiredStringArray } from "../../core/cast.ts";
+import { compactObject, optionalRecord, optionalString, requiredStringArray } from "../../core/cast.ts";
 import {
   createProviderTimeout,
   isAbortLikeError,
@@ -10,6 +10,8 @@ import {
   providerUserAgent,
   ProviderRequestError,
   readProviderJsonBody,
+  requiredInputString,
+  requiredResponseRecord,
   toProviderExecutionError,
 } from "../provider-runtime.ts";
 
@@ -77,7 +79,7 @@ export const sellerSpriteActionHandlers: ProviderActionHandlers<
       context,
       phase: "execute",
     });
-    const detail = requireResponseObject(data, "SellerSprite ASIN detail");
+    const detail = requiredResponseRecord(data, "SellerSprite ASIN detail");
     requireResponseString(detail.asin, "data.asin");
     return detail;
   },
@@ -249,7 +251,7 @@ function normalizeOptionalStrings(
 }
 
 function normalizeOptionalString(value: unknown, fieldName: string): string | undefined {
-  return value === undefined ? undefined : requireInputString(value, fieldName);
+  return value === undefined ? undefined : requiredInputString(value, fieldName);
 }
 
 function normalizeOptionalStringArray(value: unknown, fieldName: string): string[] | undefined {
@@ -257,7 +259,7 @@ function normalizeOptionalStringArray(value: unknown, fieldName: string): string
     return undefined;
   }
   return requiredStringArray(value, fieldName, providerInputError).map((item, index) =>
-    requireInputString(item, `${fieldName}[${index}]`),
+    requiredInputString(item, `${fieldName}[${index}]`),
   );
 }
 
@@ -274,7 +276,7 @@ function normalizeOptionalMonth(value: unknown): string | undefined {
   if (value === undefined) {
     return undefined;
   }
-  const month = requireInputString(value, "month");
+  const month = requiredInputString(value, "month");
   if (!isValidMonth(month)) {
     throw new ProviderRequestError(400, "month must use YYYYMM format");
   }
@@ -300,7 +302,7 @@ function normalizeOptionalOrder(value: unknown): Record<string, unknown> | undef
 }
 
 function requireMarketplace(value: unknown): string {
-  const marketplace = requireInputString(value, "marketplace");
+  const marketplace = requiredInputString(value, "marketplace");
   if (!sellerSpriteMarketplaces.has(marketplace)) {
     throw new ProviderRequestError(400, "marketplace is not supported by SellerSprite");
   }
@@ -308,15 +310,11 @@ function requireMarketplace(value: unknown): string {
 }
 
 function requireAsin(value: unknown, fieldName: string): string {
-  const asin = requireInputString(value, fieldName).toUpperCase();
+  const asin = requiredInputString(value, fieldName).toUpperCase();
   if (!isAsin(asin)) {
     throw new ProviderRequestError(400, `${fieldName} must contain 10 ASCII letters or digits`);
   }
   return asin;
-}
-
-function requireInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, providerInputError);
 }
 
 function asSellerSpriteEnvelope(value: unknown): SellerSpriteEnvelope {
@@ -404,7 +402,7 @@ function isModuleAccessMessage(message: string): boolean {
 }
 
 function normalizeProductPage(value: unknown): Record<string, unknown> {
-  const data = requireResponseObject(value, "SellerSprite product page");
+  const data = requiredResponseRecord(value, "SellerSprite product page");
   return {
     ...data,
     pages: requireResponseInteger(data.pages, "data.pages"),
@@ -416,7 +414,7 @@ function normalizeProductPage(value: unknown): Record<string, unknown> {
 }
 
 function normalizeReverseKeywords(value: unknown): Record<string, unknown> {
-  const data = requireResponseObject(value, "SellerSprite reverse keyword page");
+  const data = requiredResponseRecord(value, "SellerSprite reverse keyword page");
   return {
     ...data,
     marketplace: requireResponseString(data.marketplace, "data.marketplace"),
@@ -427,19 +425,11 @@ function normalizeReverseKeywords(value: unknown): Record<string, unknown> {
   };
 }
 
-function requireResponseObject(value: unknown, fieldName: string): Record<string, unknown> {
-  const object = optionalRecord(value);
-  if (!object) {
-    throw new ProviderRequestError(502, `${fieldName} must be an object`);
-  }
-  return object;
-}
-
 function requireResponseObjectArray(value: unknown, fieldName: string): Array<Record<string, unknown>> {
   if (!Array.isArray(value)) {
     throw new ProviderRequestError(502, `${fieldName} must be an array`);
   }
-  return value.map((item, index) => requireResponseObject(item, `${fieldName}[${index}]`));
+  return value.map((item, index) => requiredResponseRecord(item, `${fieldName}[${index}]`));
 }
 
 function requireResponseString(value: unknown, fieldName: string): string {

@@ -9,9 +9,9 @@ import {
   optionalRecord,
   optionalString,
   optionalStringArray,
+  recordOrEmpty,
   requiredBoolean,
   requiredRecord,
-  requiredString,
   stringArray,
 } from "../../core/cast.ts";
 import { assertPublicHttpUrl, isPrivateNetworkAccessAllowed, readBoundedResponseBytes } from "../../core/request.ts";
@@ -23,6 +23,7 @@ import {
   readProviderJsonBody,
   readProviderTextBody,
   readTransitFileInput,
+  requiredInputString,
 } from "../provider-runtime.ts";
 
 const defaultPiHoleApiPath = "api";
@@ -303,14 +304,6 @@ export function resolvePiHoleApiPath(input: {
   return normalizePiHoleApiPath(value);
 }
 
-function readRequiredString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, providerInputError);
-}
-
-function readRecordPayload(payload: unknown): Record<string, unknown> {
-  return optionalRecord(payload) ?? {};
-}
-
 function stripPiHoleTook(payload: Record<string, unknown>): Record<string, unknown> {
   const { took: _took, ...rest } = payload;
   return rest;
@@ -351,11 +344,11 @@ function readRestartFlag(value: unknown): boolean | undefined {
 
 export const piHoleActionHandlers: ProviderActionHandlerSubset<"pi_hole", PiHoleActionHandler> = {
   async get_overview(_input, context) {
-    const payload = readRecordPayload(await requestPiHoleJson({ context, method: "GET", path: "stats/summary" }));
+    const payload = recordOrEmpty(await requestPiHoleJson({ context, method: "GET", path: "stats/summary" }));
     return { summary: stripPiHoleTook(payload) };
   },
   async get_dns_blocking_status(_input, context) {
-    const payload = readRecordPayload(await requestPiHoleJson({ context, method: "GET", path: "dns/blocking" }));
+    const payload = recordOrEmpty(await requestPiHoleJson({ context, method: "GET", path: "dns/blocking" }));
     return readBlockingStatus(payload);
   },
   async set_dns_blocking(input, context) {
@@ -372,11 +365,11 @@ export const piHoleActionHandlers: ProviderActionHandlerSubset<"pi_hole", PiHole
         body.timer = timer;
       }
     }
-    const payload = readRecordPayload(await requestPiHoleJson({ context, method: "POST", path: "dns/blocking", body }));
+    const payload = recordOrEmpty(await requestPiHoleJson({ context, method: "POST", path: "dns/blocking", body }));
     return readBlockingStatus(payload);
   },
   async get_queries(input, context) {
-    const payload = readRecordPayload(
+    const payload = recordOrEmpty(
       await requestPiHoleJson({
         context,
         method: "GET",
@@ -409,11 +402,11 @@ export const piHoleActionHandlers: ProviderActionHandlerSubset<"pi_hole", PiHole
     };
   },
   async get_query_types(_input, context) {
-    const payload = readRecordPayload(await requestPiHoleJson({ context, method: "GET", path: "stats/query_types" }));
+    const payload = recordOrEmpty(await requestPiHoleJson({ context, method: "GET", path: "stats/query_types" }));
     return { types: optionalRecord(payload.types) ?? {} };
   },
   async get_top_domains(input, context) {
-    const payload = readRecordPayload(
+    const payload = recordOrEmpty(
       await requestPiHoleJson({
         context,
         method: "GET",
@@ -428,7 +421,7 @@ export const piHoleActionHandlers: ProviderActionHandlerSubset<"pi_hole", PiHole
     };
   },
   async get_top_clients(input, context) {
-    const payload = readRecordPayload(
+    const payload = recordOrEmpty(
       await requestPiHoleJson({
         context,
         method: "GET",
@@ -443,7 +436,7 @@ export const piHoleActionHandlers: ProviderActionHandlerSubset<"pi_hole", PiHole
     };
   },
   async get_recent_blocked(input, context) {
-    const payload = readRecordPayload(
+    const payload = recordOrEmpty(
       await requestPiHoleJson({
         context,
         method: "GET",
@@ -454,7 +447,7 @@ export const piHoleActionHandlers: ProviderActionHandlerSubset<"pi_hole", PiHole
     return { blocked: stringArray(payload.blocked, "Pi-hole recent blocked response") };
   },
   async get_upstreams(_input, context) {
-    const payload = readRecordPayload(await requestPiHoleJson({ context, method: "GET", path: "stats/upstreams" }));
+    const payload = recordOrEmpty(await requestPiHoleJson({ context, method: "GET", path: "stats/upstreams" }));
     return {
       upstreams: optionalObjectArray(payload.upstreams, "Pi-hole upstreams response"),
       forwardedQueries: optionalInteger(payload.forwarded_queries) ?? 0,
@@ -462,12 +455,12 @@ export const piHoleActionHandlers: ProviderActionHandlerSubset<"pi_hole", PiHole
     };
   },
   async get_history(_input, context) {
-    const payload = readRecordPayload(await requestPiHoleJson({ context, method: "GET", path: "history" }));
+    const payload = recordOrEmpty(await requestPiHoleJson({ context, method: "GET", path: "history" }));
     return { history: optionalObjectArray(payload.history, "Pi-hole history response") };
   },
   async search_domain(input, context) {
-    const domain = readRequiredString(input.domain, "domain");
-    const payload = readRecordPayload(
+    const domain = requiredInputString(input.domain, "domain");
+    const payload = recordOrEmpty(
       await requestPiHoleJson({
         context,
         method: "GET",
@@ -478,7 +471,7 @@ export const piHoleActionHandlers: ProviderActionHandlerSubset<"pi_hole", PiHole
     return { search: optionalRecord(payload.search) ?? {} };
   },
   async get_config(_input, context) {
-    const payload = readRecordPayload(await requestPiHoleJson({ context, method: "GET", path: "config" }));
+    const payload = recordOrEmpty(await requestPiHoleJson({ context, method: "GET", path: "config" }));
     return { config: optionalRecord(payload.config) ?? {} };
   },
   async update_config(input, context) {
@@ -487,7 +480,7 @@ export const piHoleActionHandlers: ProviderActionHandlerSubset<"pi_hole", PiHole
     if (input.restart !== undefined && restart === undefined) {
       throw providerInputError("restart must be a boolean");
     }
-    const payload = readRecordPayload(
+    const payload = recordOrEmpty(
       await requestPiHoleJson({
         context,
         method: "PATCH",
@@ -523,11 +516,11 @@ export const piHoleActionHandlers: ProviderActionHandlerSubset<"pi_hole", PiHole
     throw new ProviderRequestError(401, "Pi-hole rejected the session after re-authentication.");
   },
   async restart_dns(_input, context) {
-    const payload = readRecordPayload(await requestPiHoleJson({ context, method: "POST", path: "action/restartdns" }));
+    const payload = recordOrEmpty(await requestPiHoleJson({ context, method: "POST", path: "action/restartdns" }));
     return { status: optionalString(payload.status) ?? null };
   },
   async flush_dns_logs(_input, context) {
-    const payload = readRecordPayload(await requestPiHoleJson({ context, method: "POST", path: "action/flush/logs" }));
+    const payload = recordOrEmpty(await requestPiHoleJson({ context, method: "POST", path: "action/flush/logs" }));
     return { status: optionalString(payload.status) ?? null };
   },
   async export_backup(_input, context) {
@@ -571,9 +564,7 @@ export const piHoleActionHandlers: ProviderActionHandlerSubset<"pi_hole", PiHole
     const file = await readTransitFileInput(input.file, context);
     const form = new FormData();
     form.append("file", new File([file.file], file.name, { type: file.mimeType ?? "application/zip" }));
-    const payload = readRecordPayload(
-      await requestPiHoleJson({ context, method: "POST", path: "teleporter", body: form }),
-    );
+    const payload = recordOrEmpty(await requestPiHoleJson({ context, method: "POST", path: "teleporter", body: form }));
     return { files: optionalStringArray(payload.files) ?? [] };
   },
 };
@@ -587,7 +578,7 @@ export async function validatePiHoleCredential(
   fetcher: ProviderFetch,
   signal?: AbortSignal,
 ): Promise<CredentialValidationResult> {
-  const appPassword = readRequiredString(input.apiKey, "apiKey");
+  const appPassword = requiredInputString(input.apiKey, "apiKey");
   const baseUrl = normalizePiHoleBaseUrl(input.values.baseUrl);
   const apiPath = normalizePiHoleApiPath(input.values.apiPath);
 

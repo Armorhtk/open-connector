@@ -13,7 +13,6 @@ import {
   optionalRecord,
   optionalString,
   requiredRecord,
-  requiredString,
 } from "../../core/cast.ts";
 import { assertPublicHttpUrl, compactJson, queryParams } from "../../core/request.ts";
 import {
@@ -26,6 +25,7 @@ import {
   ProviderRequestError,
   providerUserAgent,
   requireApiKeyCredential,
+  requiredInputString,
 } from "../provider-runtime.ts";
 
 const service = "nocodb";
@@ -641,10 +641,6 @@ function normalizeNocodbBaseUrl(value: unknown): string {
 
 function buildQuery(input: Record<string, string | number | boolean | undefined>): Record<string, string> {
   return queryParams(input);
-}
-
-function requiredInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, providerInputError);
 }
 
 function requiredOutputObject(value: unknown, label: string): Record<string, unknown> {

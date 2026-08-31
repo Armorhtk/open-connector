@@ -2,13 +2,21 @@ import type { CredentialValidators, ProviderExecutors } from "../../core/types.t
 import type { ProviderActionHandlers } from "../provider-runtime.ts";
 import type { ApiKeyProviderContext } from "../provider-runtime.ts";
 
-import { compactObject, optionalBoolean, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import {
+  compactObject,
+  optionalBoolean,
+  optionalRecord,
+  optionalString,
+  rawStringOrNull,
+  requiredString,
+} from "../../core/cast.ts";
 import {
   defineApiKeyProviderExecutors,
   isAbortLikeError,
   providerInputError,
   providerUserAgent,
   ProviderRequestError,
+  requiredResponseRecord,
 } from "../provider-runtime.ts";
 
 const service = "haveibeenpwned";
@@ -342,7 +350,7 @@ function normalizeBreachArray(value: unknown, label: string): Array<Record<strin
 }
 
 function normalizeBreach(value: unknown, label: string): Record<string, unknown> {
-  const record = requireObject(value, label);
+  const record = requiredResponseRecord(value, label);
 
   return {
     Name: requireString(record.Name, `${label}.Name`),
@@ -363,7 +371,7 @@ function normalizeBreach(value: unknown, label: string): Record<string, unknown>
     IsSubscriptionFree: requireBoolean(record.IsSubscriptionFree, `${label}.IsSubscriptionFree`),
     IsStealerLog: requireBoolean(record.IsStealerLog, `${label}.IsStealerLog`),
     LogoPath: requireString(record.LogoPath, `${label}.LogoPath`),
-    Attribution: nullableString(record.Attribution),
+    Attribution: rawStringOrNull(record.Attribution),
   };
 }
 
@@ -376,19 +384,19 @@ function normalizePasteArray(value: unknown, label: string): Array<Record<string
 }
 
 function normalizePaste(value: unknown, label: string): Record<string, unknown> {
-  const record = requireObject(value, label);
+  const record = requiredResponseRecord(value, label);
 
   return {
     Source: requireString(record.Source, `${label}.Source`),
     Id: requireString(record.Id, `${label}.Id`),
-    Title: nullableString(record.Title),
-    Date: nullableString(record.Date),
+    Title: rawStringOrNull(record.Title),
+    Date: rawStringOrNull(record.Date),
     EmailCount: requireInteger(record.EmailCount, `${label}.EmailCount`),
   };
 }
 
 function normalizeSubscription(value: unknown): HaveIBeenPwnedSubscription {
-  const record = requireObject(value, "HIBP /subscription/status response");
+  const record = requiredResponseRecord(value, "HIBP /subscription/status response");
 
   return {
     SubscriptionName: requireString(record.SubscriptionName, "subscription.SubscriptionName"),
@@ -412,14 +420,6 @@ function normalizeSubscription(value: unknown): HaveIBeenPwnedSubscription {
     IncludesCustomerDomains: requireBoolean(record.IncludesCustomerDomains, "subscription.IncludesCustomerDomains"),
     IncludesKAnon: requireBoolean(record.IncludesKAnon, "subscription.IncludesKAnon"),
   };
-}
-
-function requireObject(value: unknown, label: string): Record<string, unknown> {
-  const record = optionalRecord(value);
-  if (!record) {
-    throw new ProviderRequestError(502, `${label} must be an object`);
-  }
-  return record;
 }
 
 function requireString(value: unknown, label: string): string {
@@ -450,10 +450,6 @@ function requireStringArray(value: unknown, label: string): string[] {
     throw new ProviderRequestError(502, `${label} must be an array`);
   }
   return value.map((item, index) => requireString(item, `${label}[${index}]`));
-}
-
-function nullableString(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
 }
 
 function stringifyOptionalBoolean(value: unknown): string | undefined {

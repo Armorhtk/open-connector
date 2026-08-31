@@ -2,15 +2,13 @@ import type { CredentialValidationResult } from "../../core/types.ts";
 import type { ProviderActionHandlers } from "../provider-runtime.ts";
 import type { ApiKeyProviderContext } from "../provider-runtime.ts";
 
+import { compactObject, optionalBoolean, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
 import {
-  compactObject,
-  optionalBoolean,
-  optionalNumber,
-  optionalRecord,
-  optionalString,
-  requiredString,
-} from "../../core/cast.ts";
-import { ProviderRequestError, providerUserAgent, runProviderRequest } from "../provider-runtime.ts";
+  ProviderRequestError,
+  providerUserAgent,
+  requiredInputString,
+  runProviderRequest,
+} from "../provider-runtime.ts";
 
 const memberstackApiBaseUrl = "https://admin.memberstack.com";
 
@@ -35,7 +33,7 @@ export const memberstackActionHandlers: ProviderActionHandlers<"memberstack", Me
     });
   },
   get_member(input, context) {
-    const idOrEmail = readMemberstackString(input.idOrEmail, "idOrEmail");
+    const idOrEmail = requiredInputString(input.idOrEmail, "idOrEmail");
     return requestMemberstackJson({
       context,
       path: `/members/${encodeURIComponent(idOrEmail)}`,
@@ -52,7 +50,7 @@ export const memberstackActionHandlers: ProviderActionHandlers<"memberstack", Me
       path: "/members",
       method: "POST",
       body: compactObject({
-        email: readMemberstackString(input.email, "email"),
+        email: requiredInputString(input.email, "email"),
         password: optionalString(input.password),
         plans: input.plans,
         customFields: input.customFields,
@@ -66,7 +64,7 @@ export const memberstackActionHandlers: ProviderActionHandlers<"memberstack", Me
   update_member(input, context) {
     return requestMemberstackJson({
       context,
-      path: `/members/${encodeURIComponent(readMemberstackString(input.id, "id"))}`,
+      path: `/members/${encodeURIComponent(requiredInputString(input.id, "id"))}`,
       method: "PATCH",
       body: compactObject({
         email: optionalString(input.email),
@@ -83,7 +81,7 @@ export const memberstackActionHandlers: ProviderActionHandlers<"memberstack", Me
   delete_member(input, context) {
     return requestMemberstackJson({
       context,
-      path: `/members/${encodeURIComponent(readMemberstackString(input.id, "id"))}`,
+      path: `/members/${encodeURIComponent(requiredInputString(input.id, "id"))}`,
       method: "DELETE",
       body: compactObject({
         deleteStripeCustomer: optionalBoolean(input.deleteStripeCustomer),
@@ -95,10 +93,10 @@ export const memberstackActionHandlers: ProviderActionHandlers<"memberstack", Me
   add_free_plan(input, context) {
     return requestMemberstackJson({
       context,
-      path: `/members/${encodeURIComponent(readMemberstackString(input.id, "id"))}/add-plan`,
+      path: `/members/${encodeURIComponent(requiredInputString(input.id, "id"))}/add-plan`,
       method: "POST",
       body: {
-        planId: readMemberstackString(input.planId, "planId"),
+        planId: requiredInputString(input.planId, "planId"),
       },
       emptySuccess: true,
       phase: "execute",
@@ -107,10 +105,10 @@ export const memberstackActionHandlers: ProviderActionHandlers<"memberstack", Me
   remove_free_plan(input, context) {
     return requestMemberstackJson({
       context,
-      path: `/members/${encodeURIComponent(readMemberstackString(input.id, "id"))}/remove-plan`,
+      path: `/members/${encodeURIComponent(requiredInputString(input.id, "id"))}/remove-plan`,
       method: "POST",
       body: {
-        planId: readMemberstackString(input.planId, "planId"),
+        planId: requiredInputString(input.planId, "planId"),
       },
       emptySuccess: true,
       phase: "execute",
@@ -122,7 +120,7 @@ export const memberstackActionHandlers: ProviderActionHandlers<"memberstack", Me
       path: "/members/verify-token",
       method: "POST",
       body: {
-        token: readMemberstackString(input.token, "token"),
+        token: requiredInputString(input.token, "token"),
       },
       phase: "execute",
     });
@@ -259,10 +257,6 @@ function extractMemberstackErrorMessage(payload: unknown): string | undefined {
   }
 
   return optionalString(record.message) ?? optionalString(record.code) ?? optionalString(record.error);
-}
-
-function readMemberstackString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function readOptionalBooleanString(value: unknown): string | undefined {

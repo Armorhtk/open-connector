@@ -8,7 +8,7 @@ import type {
 import type { ProviderActionHandlers } from "../provider-runtime.ts";
 import type { ApiKeyProviderContext } from "../provider-runtime.ts";
 
-import { compactObject, optionalRecord, optionalString, requiredRecord, requiredString } from "../../core/cast.ts";
+import { compactObject, optionalRecord, optionalString, requiredRecord } from "../../core/cast.ts";
 import { queryParams } from "../../core/request.ts";
 import {
   createProviderTimeout,
@@ -17,6 +17,7 @@ import {
   isAbortLikeError,
   providerUserAgent,
   ProviderRequestError,
+  requiredInputString,
 } from "../provider-runtime.ts";
 
 export const flagsmithApiBaseUrl = "https://edge.api.flagsmith.com/api/v1";
@@ -300,10 +301,6 @@ function readOptionalTraits(value: unknown): Array<Record<string, unknown>> | un
       trait_value: trait.trait_value,
     };
   });
-}
-
-function requiredInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function asObject(value: unknown): Record<string, unknown> {

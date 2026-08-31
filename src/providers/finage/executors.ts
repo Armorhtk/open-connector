@@ -9,7 +9,6 @@ import {
   optionalInteger,
   optionalRecord,
   optionalString,
-  requiredString,
   stringArray,
 } from "../../core/cast.ts";
 import {
@@ -17,6 +16,8 @@ import {
   providerResponseError,
   providerUserAgent,
   ProviderRequestError,
+  requiredInputString,
+  requiredResponseRecord,
 } from "../provider-runtime.ts";
 
 const service = "finage";
@@ -32,16 +33,16 @@ export const finageActionHandlers: ProviderActionHandlers<"finage", FinageAction
     return listStockSymbols(input, context);
   },
   get_last_quote(input, context) {
-    return getLastQuote(readInputString(input.symbol, "symbol"), context, "execute");
+    return getLastQuote(requiredInputString(input.symbol, "symbol"), context, "execute");
   },
   get_last_trade(input, context) {
-    return getLastTrade(readInputString(input.symbol, "symbol"), context, "execute");
+    return getLastTrade(requiredInputString(input.symbol, "symbol"), context, "execute");
   },
   get_aggregates(input, context) {
     return getAggregates(input, context);
   },
   get_previous_close(input, context) {
-    return getPreviousClose(readInputString(input.symbol, "symbol"), context);
+    return getPreviousClose(requiredInputString(input.symbol, "symbol"), context);
   },
   get_snapshot(input, context) {
     return getSnapshot(input, context);
@@ -107,11 +108,11 @@ async function getLastTrade(symbol: string, context: FinageActionContext, phase:
 }
 
 async function getAggregates(input: Record<string, unknown>, context: FinageActionContext): Promise<unknown> {
-  const symbol = readInputString(input.symbol, "symbol");
+  const symbol = requiredInputString(input.symbol, "symbol");
   const multiplier = readRequiredInputInteger(input.multiplier, "multiplier");
-  const timespan = readInputString(input.timespan, "timespan");
-  const dateFrom = readInputString(input.dateFrom, "dateFrom");
-  const dateTo = readInputString(input.dateTo, "dateTo");
+  const timespan = requiredInputString(input.timespan, "timespan");
+  const dateFrom = requiredInputString(input.dateFrom, "dateFrom");
+  const dateTo = requiredInputString(input.dateTo, "dateTo");
   if (dateFrom > dateTo) {
     throw new ProviderRequestError(400, "dateTo must be greater than or equal to dateFrom");
   }
@@ -136,7 +137,7 @@ async function getPreviousClose(symbol: string, context: FinageActionContext): P
 
 async function getSnapshot(input: Record<string, unknown>, context: FinageActionContext): Promise<unknown> {
   const symbols = stringArray(input.symbols, "symbols", (message) => new ProviderRequestError(400, message)).map(
-    (value, index) => readInputString(value, `symbols[${index}]`),
+    (value, index) => requiredInputString(value, `symbols[${index}]`),
   );
   if (symbols.length === 0) {
     throw new ProviderRequestError(400, "symbols must be a non-empty string array");
@@ -190,7 +191,7 @@ async function finageGet(
     if (!response.ok || isFinageErrorPayload(payload)) {
       throw buildFinageError(phase, response.status, payload);
     }
-    return readRequiredObject(payload, "payload");
+    return requiredResponseRecord(payload, "payload");
   } catch (error) {
     if (error instanceof ProviderRequestError) {
       throw error;
@@ -353,24 +354,12 @@ function normalizeSnapshotTrade(input: Record<string, unknown>): Record<string, 
   };
 }
 
-function readRequiredObject(value: unknown, fieldName: string): Record<string, unknown> {
-  const record = optionalRecord(value);
-  if (!record) {
-    throw new ProviderRequestError(502, `${fieldName} must be an object`);
-  }
-  return record;
-}
-
 function readRequiredString(value: unknown, fieldName: string): string {
   const normalized = optionalString(value);
   if (!normalized) {
     throw new ProviderRequestError(502, `${fieldName} must be a string`);
   }
   return normalized;
-}
-
-function readInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
 }
 
 function readRequiredNumber(value: unknown, fieldName: string): number {

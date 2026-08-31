@@ -3,7 +3,9 @@ import type { Document360ActionName } from "./actions.ts";
 
 import {
   compactObject,
+  looseArray,
   optionalBoolean,
+  optionalBooleanOrNull,
   optionalInteger,
   optionalNumber,
   optionalRecord,
@@ -37,7 +39,7 @@ const handlers: Record<Document360ActionName, Handler> = {
     const payload = await requestJson({ ...context, path: "/v2/ProjectVersions", query: {}, phase: "execute" });
     return {
       meta: normalizeEnvelopeMeta(payload),
-      workspaces: readArray(payload.data).map(normalizeWorkspace).filter(hasId),
+      workspaces: looseArray(payload.data).map(normalizeWorkspace).filter(hasId),
       raw: payload,
     };
   },
@@ -56,7 +58,7 @@ const handlers: Record<Document360ActionName, Handler> = {
     });
     return {
       meta: normalizeEnvelopeMeta(payload),
-      articles: readArray(payload.data).map(normalizeArticle).filter(hasId),
+      articles: looseArray(payload.data).map(normalizeArticle).filter(hasId),
       pagination: optionalRecord(payload.pagination) ?? null,
       raw: payload,
     };
@@ -76,7 +78,7 @@ const handlers: Record<Document360ActionName, Handler> = {
     });
     return {
       meta: normalizeEnvelopeMeta(payload),
-      categories: readArray(payload.data).map(normalizeCategory).filter(hasId),
+      categories: looseArray(payload.data).map(normalizeCategory).filter(hasId),
       raw: payload,
     };
   },
@@ -96,7 +98,7 @@ const handlers: Record<Document360ActionName, Handler> = {
     const data = optionalRecord(payload.data) ?? {};
     return {
       meta: normalizeEnvelopeMeta(payload),
-      hits: readArray(data.hits).map(normalizeSearchHit),
+      hits: looseArray(data.hits).map(normalizeSearchHit),
       totalHits: nullableInteger(data.nb_hits),
       page: nullableInteger(data.page),
       totalPages: nullableInteger(data.nb_pages),
@@ -127,7 +129,7 @@ export const credentialValidators: CredentialValidators = {
       signal,
       phase: "validate",
     });
-    const workspaces = readArray(payload.data).map(normalizeWorkspace).filter(hasId);
+    const workspaces = looseArray(payload.data).map(normalizeWorkspace).filter(hasId);
     const mainWorkspace = workspaces.find((workspace) => workspace.isMainVersion === true) ?? workspaces[0];
     return {
       profile: {
@@ -222,7 +224,7 @@ function normalizeEnvelopeMeta(payload: Record<string, unknown>): Record<string,
 }
 
 function normalizeNotifications(value: unknown): Array<Record<string, unknown>> {
-  return readArray(value).map((item) => {
+  return looseArray(value).map((item) => {
     const record = optionalRecord(item) ?? {};
     return {
       description: optionalString(record.description) ?? null,
@@ -239,16 +241,16 @@ function normalizeWorkspace(value: unknown): Record<string, unknown> {
     versionNumber: nullableNumber(record.version_number),
     baseVersionNumber: nullableNumber(record.base_version_number),
     versionCodeName: optionalString(record.version_code_name) ?? null,
-    isMainVersion: nullableBoolean(record.is_main_version),
-    isBeta: nullableBoolean(record.is_beta),
-    isPublic: nullableBoolean(record.is_public),
-    isDeprecated: nullableBoolean(record.is_deprecated),
+    isMainVersion: optionalBooleanOrNull(record.is_main_version),
+    isBeta: optionalBooleanOrNull(record.is_beta),
+    isPublic: optionalBooleanOrNull(record.is_public),
+    isDeprecated: optionalBooleanOrNull(record.is_deprecated),
     slug: optionalString(record.slug) ?? null,
     order: nullableInteger(record.order),
     versionType: record.version_type ?? null,
     createdAt: optionalString(record.created_at) ?? null,
     modifiedAt: optionalString(record.modified_at) ?? null,
-    languages: readArray(record.language_versions).map(normalizeLanguage),
+    languages: looseArray(record.language_versions).map(normalizeLanguage),
     raw: record,
   };
 }
@@ -260,8 +262,8 @@ function normalizeLanguage(value: unknown): Record<string, unknown> {
     code: optionalString(record.code) ?? null,
     name: optionalString(record.name) ?? null,
     displayName: optionalString(record.display_name) ?? null,
-    setAsDefault: nullableBoolean(record.set_as_default),
-    hidden: nullableBoolean(record.hidden),
+    setAsDefault: optionalBooleanOrNull(record.set_as_default),
+    hidden: optionalBooleanOrNull(record.hidden),
     raw: record,
   };
 }
@@ -276,13 +278,13 @@ function normalizeArticle(value: unknown): Record<string, unknown> {
     languageCode: optionalString(record.language_code) ?? null,
     publicVersion: nullableNumber(record.public_version),
     latestVersion: nullableNumber(record.latest_version),
-    hidden: nullableBoolean(record.hidden),
+    hidden: optionalBooleanOrNull(record.hidden),
     status: record.status ?? null,
     order: nullableInteger(record.order),
     contentType: record.content_type ?? null,
     translationOption: record.translation_option ?? null,
-    isSharedArticle: nullableBoolean(record.is_shared_article),
-    excludeFromExternalSearch: nullableBoolean(record.exclude_from_external_search),
+    isSharedArticle: optionalBooleanOrNull(record.is_shared_article),
+    excludeFromExternalSearch: optionalBooleanOrNull(record.exclude_from_external_search),
     securityVisibility: record.security_visibility ?? null,
     currentWorkflowStatusId: optionalString(record.current_workflow_status_id) ?? null,
     createdAt: optionalString(record.created_at) ?? null,
@@ -300,16 +302,16 @@ function normalizeCategory(value: unknown): Record<string, unknown> {
     slug: optionalString(record.slug) ?? null,
     languageCode: optionalString(record.language_code) ?? null,
     categoryType: record.category_type ?? null,
-    hidden: nullableBoolean(record.hidden),
+    hidden: optionalBooleanOrNull(record.hidden),
     order: nullableInteger(record.order),
     icon: optionalString(record.icon) ?? null,
     status: record.status ?? null,
-    excludeFromExternalSearch: nullableBoolean(record.exclude_from_external_search),
+    excludeFromExternalSearch: optionalBooleanOrNull(record.exclude_from_external_search),
     securityVisibility: record.security_visibility ?? null,
     createdAt: optionalString(record.created_at) ?? null,
     modifiedAt: optionalString(record.modified_at) ?? null,
-    articles: readArray(record.articles).map(normalizeArticle).filter(hasId),
-    childCategories: readArray(record.child_categories).map(normalizeCategory).filter(hasId),
+    articles: looseArray(record.articles).map(normalizeArticle).filter(hasId),
+    childCategories: looseArray(record.child_categories).map(normalizeCategory).filter(hasId),
     raw: record,
   };
 }
@@ -331,9 +333,9 @@ function normalizeSearchHit(value: unknown): Record<string, unknown> {
     slug: optionalString(record.slug) ?? null,
     version: nullableNumber(record.version),
     order: nullableInteger(record.order),
-    isHidden: nullableBoolean(record.is_hidden),
-    isDraft: nullableBoolean(record.is_draft),
-    isPrivate: nullableBoolean(record.is_private),
+    isHidden: optionalBooleanOrNull(record.is_hidden),
+    isDraft: optionalBooleanOrNull(record.is_draft),
+    isPrivate: optionalBooleanOrNull(record.is_private),
     langCode: optionalString(record.lang_code) ?? null,
     objectId: optionalString(record.object_id) ?? null,
     raw: record,
@@ -344,18 +346,10 @@ function hasId(value: { id?: unknown }): boolean {
   return value.id !== "";
 }
 
-function readArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
 function nullableNumber(value: unknown): number | null {
   return optionalNumber(value) ?? null;
 }
 
 function nullableInteger(value: unknown): number | null {
   return optionalInteger(value) ?? null;
-}
-
-function nullableBoolean(value: unknown): boolean | null {
-  return typeof value === "boolean" ? value : null;
 }

@@ -2,15 +2,13 @@ import type { CredentialValidators, ProviderExecutors } from "../../core/types.t
 import type { ProviderActionHandlers } from "../provider-runtime.ts";
 import type { ApiKeyProviderContext, ProviderRuntimeHandler } from "../provider-runtime.ts";
 
+import { compactObject, optionalBoolean, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
 import {
-  compactObject,
-  optionalBoolean,
-  optionalNumber,
-  optionalRecord,
-  optionalString,
-  requiredString,
-} from "../../core/cast.ts";
-import { defineApiKeyProviderExecutors, providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
+  defineApiKeyProviderExecutors,
+  providerUserAgent,
+  ProviderRequestError,
+  requiredInputString,
+} from "../provider-runtime.ts";
 
 const service = "brandfetch";
 const brandfetchApiBaseUrl = "https://api.brandfetch.io";
@@ -267,10 +265,6 @@ function normalizeObjectArray(value: unknown): Array<Record<string, unknown>> | 
   return value
     .map((item) => optionalRecord(item))
     .filter((item): item is Record<string, unknown> => item !== undefined);
-}
-
-function requiredInputString(value: unknown, key: string): string {
-  return requiredString(value, key, (message) => new ProviderRequestError(400, message));
 }
 
 function createBrandfetchError(response: Response, payload: unknown, phase: BrandfetchPhase): ProviderRequestError {

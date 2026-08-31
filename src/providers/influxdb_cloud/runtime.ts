@@ -1,6 +1,6 @@
 import type { ProviderActionHandlers } from "../provider-runtime.ts";
 
-import { optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import { optionalInteger, optionalRecord, optionalString, recordOrEmpty, requiredString } from "../../core/cast.ts";
 import {
   createProviderTimeout,
   isAbortSignalError,
@@ -69,14 +69,14 @@ export function resolveInfluxdbCloudApiBaseUrl(value: unknown): string {
 }
 
 async function listBuckets(input: Record<string, unknown>, context: InfluxdbCloudActionContext): Promise<unknown> {
-  const payload = asObject(
+  const payload = recordOrEmpty(
     await requestForAction(context, "/api/v2/buckets", {
       query: {
         limit: optionalInteger(input.limit),
         offset: optionalInteger(input.offset),
-        after: readOptionalString(input.after),
-        name: readOptionalString(input.name),
-        id: readOptionalString(input.id),
+        after: optionalString(input.after),
+        name: optionalString(input.name),
+        id: optionalString(input.id),
       },
     }),
   );
@@ -93,13 +93,13 @@ async function getBucket(input: Record<string, unknown>, context: InfluxdbCloudA
 }
 
 async function queryInfluxql(input: Record<string, unknown>, context: InfluxdbCloudActionContext): Promise<unknown> {
-  const payload = asObject(
+  const payload = recordOrEmpty(
     await requestForAction(context, "/query", {
       query: {
         db: requiredString(input.database, "database", (message) => new ProviderRequestError(400, message)),
         q: requiredString(input.query, "query", (message) => new ProviderRequestError(400, message)),
-        rp: readOptionalString(input.retentionPolicy),
-        epoch: readOptionalString(input.epoch),
+        rp: optionalString(input.retentionPolicy),
+        epoch: optionalString(input.epoch),
       },
     }),
   );
@@ -116,8 +116,8 @@ async function writeLineProtocol(
     method: "POST",
     query: {
       db: requiredString(input.database, "database", (message) => new ProviderRequestError(400, message)),
-      rp: readOptionalString(input.retentionPolicy),
-      precision: readOptionalString(input.precision),
+      rp: optionalString(input.retentionPolicy),
+      precision: optionalString(input.precision),
     },
     textBody: requireNonBlankText(input.lineProtocol, "lineProtocol"),
     allowPartialWrite: true,
@@ -272,11 +272,7 @@ function readErrorMessage(payload: unknown): string | undefined {
     return payload.trim() || undefined;
   }
   const record = optionalRecord(payload);
-  return readOptionalString(record?.message) ?? readOptionalString(record?.error) ?? readOptionalString(record?.detail);
-}
-
-function asObject(value: unknown): Record<string, unknown> {
-  return optionalRecord(value) ?? {};
+  return optionalString(record?.message) ?? optionalString(record?.error) ?? optionalString(record?.detail);
 }
 
 function requireObject(value: unknown, fieldName: string): Record<string, unknown> {
@@ -305,8 +301,4 @@ function requireNonBlankText(value: unknown, fieldName: string): string {
     return value;
   }
   throw new ProviderRequestError(400, `${fieldName} is required`);
-}
-
-function readOptionalString(value: unknown): string | undefined {
-  return optionalString(value);
 }

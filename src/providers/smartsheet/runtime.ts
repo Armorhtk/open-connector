@@ -2,7 +2,15 @@ import type { CredentialValidationResult } from "../../core/types.ts";
 import type { ProviderActionHandlers } from "../provider-runtime.ts";
 import type { ApiKeyProviderContext } from "../provider-runtime.ts";
 
-import { compactObject, optionalNumber, optionalRecord, optionalString } from "../../core/cast.ts";
+import {
+  booleanString,
+  compactObject,
+  looseArray,
+  optionalBooleanOrNull,
+  optionalNumber,
+  optionalRecord,
+  optionalString,
+} from "../../core/cast.ts";
 import { ProviderRequestError, providerUserAgent, runProviderRequest } from "../provider-runtime.ts";
 
 export const smartsheetApiBaseUrl = "https://api.smartsheet.com/2.0";
@@ -18,7 +26,7 @@ export const smartsheetActionHandlers: ProviderActionHandlers<"smartsheet", Smar
       path: "/sheets",
       context,
       params: compactObject({
-        includeAll: stringifyOptionalBoolean(input.includeAll),
+        includeAll: booleanString(input.includeAll),
         modifiedSince: optionalString(input.modifiedSince),
         page: stringifyOptionalNumber(input.page),
         pageSize: stringifyOptionalNumber(input.pageSize),
@@ -29,7 +37,7 @@ export const smartsheetActionHandlers: ProviderActionHandlers<"smartsheet", Smar
 
     return {
       page: normalizePage(record),
-      sheets: normalizeArray(record.data).map(normalizeSheetSummary),
+      sheets: looseArray(record.data).map(normalizeSheetSummary),
       raw: record,
     };
   },
@@ -65,8 +73,8 @@ export const smartsheetActionHandlers: ProviderActionHandlers<"smartsheet", Smar
       path: `/sheets/${sheetId}/rows`,
       context,
       params: compactObject({
-        allowPartialSuccess: stringifyOptionalBoolean(input.allowPartialSuccess),
-        overrideValidation: stringifyOptionalBoolean(input.overrideValidation),
+        allowPartialSuccess: booleanString(input.allowPartialSuccess),
+        overrideValidation: booleanString(input.overrideValidation),
       }),
       body: readRows(input.rows),
       phase: "execute",
@@ -84,8 +92,8 @@ export const smartsheetActionHandlers: ProviderActionHandlers<"smartsheet", Smar
       path: `/sheets/${sheetId}/rows`,
       context,
       params: compactObject({
-        allowPartialSuccess: stringifyOptionalBoolean(input.allowPartialSuccess),
-        overrideValidation: stringifyOptionalBoolean(input.overrideValidation),
+        allowPartialSuccess: booleanString(input.allowPartialSuccess),
+        overrideValidation: booleanString(input.overrideValidation),
       }),
       body: rows,
       phase: "execute",
@@ -102,7 +110,7 @@ export const smartsheetActionHandlers: ProviderActionHandlers<"smartsheet", Smar
       context,
       params: compactObject({
         ids: rowIds.join(","),
-        ignoreRowsNotFound: stringifyOptionalBoolean(input.ignoreRowsNotFound),
+        ignoreRowsNotFound: booleanString(input.ignoreRowsNotFound),
       }),
       phase: "execute",
     });
@@ -129,7 +137,7 @@ export async function validateSmartsheetCredential(
     phase: "validate",
   });
   const record = requiredRecord(payload, "Smartsheet returned an invalid validation payload");
-  const firstSheet = normalizeSheetSummary(normalizeArray(record.data)[0]);
+  const firstSheet = normalizeSheetSummary(looseArray(record.data)[0]);
   const firstSheetName = firstSheet.name ?? undefined;
 
   return {
@@ -253,8 +261,8 @@ function normalizeSheet(value: unknown): Record<string, unknown> {
     modifiedAt: nullableString(record.modifiedAt),
     version: nullableInteger(record.version),
     totalRowCount: nullableInteger(record.totalRowCount),
-    columns: normalizeArray(record.columns).map(normalizeColumn),
-    rows: normalizeArray(record.rows).map(normalizeRow),
+    columns: looseArray(record.columns).map(normalizeColumn),
+    rows: looseArray(record.rows).map(normalizeRow),
     raw: record,
   };
 }
@@ -265,10 +273,10 @@ function normalizeColumn(value: unknown): Record<string, unknown> {
     id: nullableInteger(record.id),
     title: nullableString(record.title),
     type: nullableString(record.type),
-    primary: nullableBoolean(record.primary),
+    primary: optionalBooleanOrNull(record.primary),
     index: nullableInteger(record.index),
     symbol: nullableString(record.symbol),
-    options: normalizeArray(record.options).flatMap((option) => (typeof option === "string" ? [option] : [])),
+    options: looseArray(record.options).flatMap((option) => (typeof option === "string" ? [option] : [])),
     raw: record,
   };
 }
@@ -280,10 +288,10 @@ function normalizeRow(value: unknown): Record<string, unknown> {
     sheetId: nullableInteger(record.sheetId),
     rowNumber: nullableInteger(record.rowNumber),
     permalink: nullableString(record.permalink),
-    expanded: nullableBoolean(record.expanded),
+    expanded: optionalBooleanOrNull(record.expanded),
     createdAt: nullableString(record.createdAt),
     modifiedAt: nullableString(record.modifiedAt),
-    cells: normalizeArray(record.cells).map(normalizeCell),
+    cells: looseArray(record.cells).map(normalizeCell),
     raw: record,
   };
 }
@@ -305,7 +313,7 @@ function normalizeWriteResult(value: unknown): Record<string, unknown> {
     message: nullableString(record.message),
     resultCode: nullableInteger(record.resultCode),
     version: nullableInteger(record.version),
-    rows: normalizeArray(record.result).map(normalizeRow),
+    rows: looseArray(record.result).map(normalizeRow),
     raw: record,
   };
 }
@@ -333,16 +341,8 @@ function readPositiveInteger(value: unknown, fieldName: string): number {
   return parsed;
 }
 
-function normalizeArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
 function stringifyOptionalNumber(value: unknown): string | undefined {
   return typeof value === "number" ? String(value) : undefined;
-}
-
-function stringifyOptionalBoolean(value: unknown): string | undefined {
-  return typeof value === "boolean" ? String(value) : undefined;
 }
 
 function nullableString(value: unknown): string | null {
@@ -353,8 +353,4 @@ function nullableInteger(value: unknown): number | null {
   if (value == null) return null;
   const number = typeof value === "number" ? value : Number(value);
   return Number.isInteger(number) ? number : null;
-}
-
-function nullableBoolean(value: unknown): boolean | null {
-  return typeof value === "boolean" ? value : null;
 }

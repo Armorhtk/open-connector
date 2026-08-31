@@ -13,7 +13,6 @@ import {
   optionalRecord,
   optionalString,
   requiredRecord,
-  requiredString,
 } from "../../core/cast.ts";
 import {
   defineProviderExecutors,
@@ -21,6 +20,7 @@ import {
   providerUserAgent,
   ProviderRequestError,
   requireApiKeyCredential,
+  requiredInputString,
   runProviderRequest,
 } from "../provider-runtime.ts";
 
@@ -61,7 +61,7 @@ export const proxiedmailActionHandlers: ProviderActionHandlers<"proxiedmail", Pr
           type: "proxy_bindings",
           attributes: compactObject({
             real_addresses: readStringArray(input.realAddresses, "realAddresses"),
-            proxy_address: readOptionalNonEmptyString(input.proxyAddress),
+            proxy_address: optionalString(input.proxyAddress),
             callback_url: readOptionalString(input.callbackUrl),
             is_browsable: typeof input.isBrowsable === "boolean" ? input.isBrowsable : undefined,
           }),
@@ -75,10 +75,10 @@ export const proxiedmailActionHandlers: ProviderActionHandlers<"proxiedmail", Pr
   },
 
   async update_proxy_binding(input, context) {
-    const proxyBindingId = readRequiredNonEmptyString(input.proxyBindingId, "proxyBindingId");
+    const proxyBindingId = requiredInputString(input.proxyBindingId, "proxyBindingId");
     const attributes = compactObject({
       real_addresses: readOptionalRealAddressUpdates(input.realAddresses),
-      proxy_address: readOptionalNonEmptyString(input.proxyAddress),
+      proxy_address: optionalString(input.proxyAddress),
       description: typeof input.description === "string" ? input.description : undefined,
       callback_url: readOptionalString(input.callbackUrl),
       is_browsable: typeof input.isBrowsable === "boolean" ? input.isBrowsable : undefined,
@@ -107,7 +107,7 @@ export const proxiedmailActionHandlers: ProviderActionHandlers<"proxiedmail", Pr
   },
 
   async list_received_email_links(input, context) {
-    const proxyBindingId = readRequiredNonEmptyString(input.proxyBindingId, "proxyBindingId");
+    const proxyBindingId = requiredInputString(input.proxyBindingId, "proxyBindingId");
     const payload = await requestProxiedmailJson({
       apiKey: context.apiKey,
       path: `/received-emails-links/${encodeURIComponent(proxyBindingId)}`,
@@ -127,7 +127,7 @@ export const proxiedmailActionHandlers: ProviderActionHandlers<"proxiedmail", Pr
   },
 
   async get_received_email(input, context) {
-    const receivedEmailId = readRequiredNonEmptyString(input.receivedEmailId, "receivedEmailId");
+    const receivedEmailId = requiredInputString(input.receivedEmailId, "receivedEmailId");
     const payload = await requestProxiedmailJson({
       apiKey: context.apiKey,
       path: `/received-emails/${encodeURIComponent(receivedEmailId)}`,
@@ -338,14 +338,6 @@ function readOptionalRealAddressUpdates(value: unknown): Record<string, boolean>
       return [email, enabled];
     }),
   );
-}
-
-function readRequiredNonEmptyString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
-}
-
-function readOptionalNonEmptyString(value: unknown): string | undefined {
-  return optionalString(value);
 }
 
 function readOptionalString(value: unknown): string | undefined {

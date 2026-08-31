@@ -1,7 +1,14 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
 import type { ProviderActionHandlers } from "../provider-runtime.ts";
 
-import { compactObject, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
+import {
+  compactObject,
+  looseArray,
+  optionalBooleanOrNull,
+  optionalInteger,
+  optionalRecord,
+  optionalString,
+} from "../../core/cast.ts";
 import { providerUserAgent, ProviderRequestError, runProviderRequest } from "../provider-runtime.ts";
 
 export const bigmailerApiBaseUrl: string = "https://api.bigmailer.io";
@@ -439,7 +446,7 @@ function normalizeStringArray(value: unknown) {
 
 function normalizePage(response: Record<string, unknown> | undefined) {
   return {
-    hasMore: nullableBoolean(response?.has_more),
+    hasMore: optionalBooleanOrNull(response?.has_more),
     cursor: nullableString(response?.cursor),
     total: nullableInteger(response?.total),
   };
@@ -464,7 +471,7 @@ function normalizeList(record: Record<string, unknown> | undefined) {
   return {
     id: nullableString(record?.id),
     name: nullableString(record?.name),
-    all: nullableBoolean(record?.all),
+    all: optionalBooleanOrNull(record?.all),
     numContacts: nullableInteger(record?.num_contacts),
     created: nullableInteger(record?.created),
     engagement: nullableObject(record?.engagement),
@@ -477,9 +484,9 @@ function normalizeContact(record: Record<string, unknown> | undefined) {
     id: nullableString(record?.id),
     brandId: nullableString(record?.brand_id),
     email: nullableString(record?.email),
-    fieldValues: normalizeLooseArray(record?.field_values),
+    fieldValues: looseArray(record?.field_values),
     listIds: normalizeStringArray(record?.list_ids) ?? [],
-    unsubscribeAll: nullableBoolean(record?.unsubscribe_all),
+    unsubscribeAll: optionalBooleanOrNull(record?.unsubscribe_all),
     unsubscribeIds: normalizeStringArray(record?.unsubscribe_ids) ?? [],
     numSoftBounces: nullableInteger(record?.num_soft_bounces),
     numHardBounces: nullableInteger(record?.num_hard_bounces),
@@ -507,16 +514,8 @@ function normalizeObjectArray(value: unknown) {
     .filter((item): item is Record<string, unknown> => item !== undefined);
 }
 
-function normalizeLooseArray(value: unknown) {
-  return Array.isArray(value) ? value : [];
-}
-
 function nullableObject(value: unknown) {
   return optionalRecord(value) ?? null;
-}
-
-function nullableBoolean(value: unknown) {
-  return typeof value === "boolean" ? value : null;
 }
 
 function nullableInteger(value: unknown) {

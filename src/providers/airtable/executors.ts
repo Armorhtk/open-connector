@@ -10,13 +10,13 @@ import {
   optionalRecord,
   optionalString,
   optionalStringArray,
-  requiredRecord,
 } from "../../core/cast.ts";
 import {
   defineBearerProviderExecutors,
   ProviderRequestError,
   providerResponseError,
   providerUserAgent,
+  requiredResponseRecord,
 } from "../provider-runtime.ts";
 
 type AirtableRequestMode = "validate" | "execute";
@@ -106,7 +106,7 @@ async function validateAirtableCredential(
   auth: AirtableAuth,
   fetcher: typeof fetch,
 ): Promise<CredentialValidationResult> {
-  const payload = readObject(
+  const payload = requiredResponseRecord(
     await requestAirtableJson({
       auth,
       path: airtableValidationPath,
@@ -137,7 +137,7 @@ async function validateAirtableCredential(
 }
 
 async function listBases(input: AirtableActionInput, context: BearerProviderContext) {
-  const payload = readObject(
+  const payload = requiredResponseRecord(
     await requestAirtableJson({
       auth: context,
       path: airtableListBasesPath,
@@ -155,7 +155,7 @@ async function listBases(input: AirtableActionInput, context: BearerProviderCont
 }
 
 async function getBaseCollaborators(input: AirtableActionInput, context: BearerProviderContext) {
-  const payload = readObject(
+  const payload = requiredResponseRecord(
     await requestAirtableJson({
       auth: context,
       path: `/v0/meta/bases/${encodeURIComponent(requireString(input.baseId, "baseId"))}`,
@@ -173,7 +173,7 @@ async function getBaseCollaborators(input: AirtableActionInput, context: BearerP
 }
 
 async function getBaseSchema(input: AirtableActionInput, context: BearerProviderContext) {
-  const payload = readObject(
+  const payload = requiredResponseRecord(
     await requestAirtableJson({
       auth: context,
       path: `/v0/meta/bases/${encodeURIComponent(requireString(input.baseId, "baseId"))}/tables`,
@@ -191,7 +191,7 @@ async function getBaseSchema(input: AirtableActionInput, context: BearerProvider
 }
 
 async function createBase(input: AirtableActionInput, context: BearerProviderContext) {
-  return readObject(
+  return requiredResponseRecord(
     await requestAirtableJson({
       auth: context,
       path: "/v0/meta/bases",
@@ -209,7 +209,7 @@ async function createBase(input: AirtableActionInput, context: BearerProviderCon
 }
 
 async function deleteBase(input: AirtableActionInput, context: BearerProviderContext) {
-  return readObject(
+  return requiredResponseRecord(
     await requestAirtableJson({
       auth: context,
       path: `/v0/meta/bases/${encodeURIComponent(requireString(input.baseId, "baseId"))}`,
@@ -223,7 +223,7 @@ async function deleteBase(input: AirtableActionInput, context: BearerProviderCon
 }
 
 async function createTable(input: AirtableActionInput, context: BearerProviderContext) {
-  return readObject(
+  return requiredResponseRecord(
     await requestAirtableJson({
       auth: context,
       path: `/v0/meta/bases/${encodeURIComponent(requireString(input.baseId, "baseId"))}/tables`,
@@ -242,7 +242,7 @@ async function createTable(input: AirtableActionInput, context: BearerProviderCo
 }
 
 async function updateTable(input: AirtableActionInput, context: BearerProviderContext) {
-  return readObject(
+  return requiredResponseRecord(
     await requestAirtableJson({
       auth: context,
       path: `/v0/meta/bases/${encodeURIComponent(requireString(input.baseId, "baseId"))}/tables/${encodeURIComponent(requireString(input.tableIdOrName, "tableIdOrName"))}`,
@@ -261,7 +261,7 @@ async function updateTable(input: AirtableActionInput, context: BearerProviderCo
 }
 
 async function createField(input: AirtableActionInput, context: BearerProviderContext) {
-  return readObject(
+  return requiredResponseRecord(
     await requestAirtableJson({
       auth: context,
       path: `/v0/meta/bases/${encodeURIComponent(requireString(input.baseId, "baseId"))}/tables/${encodeURIComponent(requireString(input.tableId, "tableId"))}/fields`,
@@ -276,7 +276,7 @@ async function createField(input: AirtableActionInput, context: BearerProviderCo
 }
 
 async function updateField(input: AirtableActionInput, context: BearerProviderContext) {
-  return readObject(
+  return requiredResponseRecord(
     await requestAirtableJson({
       auth: context,
       path: `/v0/meta/bases/${encodeURIComponent(requireString(input.baseId, "baseId"))}/tables/${encodeURIComponent(requireString(input.tableId, "tableId"))}/fields/${encodeURIComponent(requireString(input.columnId, "columnId"))}`,
@@ -299,7 +299,7 @@ async function listRecords(input: AirtableActionInput, context: BearerProviderCo
   const query = buildRecordReadQuery(input);
   const usePostEndpoint = buildAirtableUrl(path, query).toString().length >= airtableGetUrlLengthSoftLimit;
 
-  const payload = readObject(
+  const payload = requiredResponseRecord(
     await requestAirtableJson({
       auth: context,
       path: usePostEndpoint ? `${path}/listRecords` : path,
@@ -320,7 +320,7 @@ async function listRecords(input: AirtableActionInput, context: BearerProviderCo
 }
 
 async function getRecord(input: AirtableActionInput, context: BearerProviderContext) {
-  const payload = readObject(
+  const payload = requiredResponseRecord(
     await requestAirtableJson({
       auth: context,
       path: `${buildRecordCollectionPath(input)}/${encodeURIComponent(requireString(input.recordId, "recordId"))}`,
@@ -338,7 +338,7 @@ async function getRecord(input: AirtableActionInput, context: BearerProviderCont
 }
 
 async function createRecords(input: AirtableActionInput, context: BearerProviderContext) {
-  const payload = readObject(
+  const payload = requiredResponseRecord(
     await requestAirtableJson({
       auth: context,
       path: buildRecordCollectionPath(input),
@@ -361,7 +361,7 @@ async function createRecords(input: AirtableActionInput, context: BearerProvider
 }
 
 async function updateRecords(input: AirtableActionInput, context: BearerProviderContext) {
-  const payload = readObject(
+  const payload = requiredResponseRecord(
     await requestAirtableJson({
       auth: context,
       path: buildRecordCollectionPath(input),
@@ -384,7 +384,7 @@ async function updateRecords(input: AirtableActionInput, context: BearerProvider
 }
 
 async function deleteRecords(input: AirtableActionInput, context: BearerProviderContext) {
-  const payload = readObject(
+  const payload = requiredResponseRecord(
     await requestAirtableJson({
       auth: context,
       path: buildRecordCollectionPath(input),
@@ -578,7 +578,7 @@ function buildRecordReadQuery(input: Record<string, unknown>): Array<readonly [s
 
   const sort = Array.isArray(input.sort) ? input.sort : [];
   for (const [index, item] of sort.entries()) {
-    const sortItem = readObject(item, `sort[${index}]`);
+    const sortItem = requiredResponseRecord(item, `sort[${index}]`);
     const field = requireString(sortItem.field, `sort[${index}].field`);
     query.push([`sort[${index}][field]`, field]);
 
@@ -602,7 +602,7 @@ function buildListRecordsPostBody(input: Record<string, unknown>): Record<string
     fields: Array.isArray(input.fields) ? input.fields.map((field) => requireString(field, "fields item")) : undefined,
     sort: Array.isArray(input.sort)
       ? input.sort.map((item, index) => {
-          const sortItem = readObject(item, `sort[${index}]`);
+          const sortItem = requiredResponseRecord(item, `sort[${index}]`);
           return compactObject({
             field: requireString(sortItem.field, `sort[${index}].field`),
             direction: optionalString(sortItem.direction),
@@ -694,7 +694,7 @@ function readTableConfigs(value: unknown): Array<Record<string, unknown>> {
   }
 
   return tables.map((table, index) => {
-    const tableObject = readObject(table, `tables[${index}]`);
+    const tableObject = requiredResponseRecord(table, `tables[${index}]`);
     return compactObject({
       ...tableObject,
       name: requireString(tableObject.name, `tables[${index}].name`),
@@ -714,7 +714,7 @@ function readFieldConfigs(value: unknown, fieldName: string): Array<Record<strin
 }
 
 function readCreateFieldConfig(value: unknown, fieldName: string): Record<string, unknown> {
-  const field = { ...readObject(value, fieldName) };
+  const field = { ...requiredResponseRecord(value, fieldName) };
   delete field.baseId;
   delete field.tableId;
   delete field.columnId;
@@ -735,7 +735,7 @@ function readCreateRecords(value: unknown): Array<Record<string, unknown>> {
   }
 
   return records.map((record, index) => {
-    const recordObject = readObject(record, `records[${index}]`);
+    const recordObject = requiredResponseRecord(record, `records[${index}]`);
     return {
       fields: readRecordFields(recordObject.fields, `records[${index}].fields`),
     };
@@ -749,7 +749,7 @@ function readUpdateRecords(value: unknown): Array<Record<string, unknown>> {
   }
 
   return records.map((record, index) => {
-    const recordObject = readObject(record, `records[${index}]`);
+    const recordObject = requiredResponseRecord(record, `records[${index}]`);
     return {
       id: requireString(recordObject.id, `records[${index}].id`),
       fields: readRecordFields(recordObject.fields, `records[${index}].fields`),
@@ -763,10 +763,6 @@ function readRecordFields(value: unknown, fieldName: string): Record<string, unk
     throw new ProviderRequestError(400, `${fieldName} must be an object`);
   }
   return fields;
-}
-
-function readObject(value: unknown, context: string): Record<string, unknown> {
-  return requiredRecord(value, context, providerResponseError);
 }
 
 function requireString(value: unknown, fieldName: string): string {

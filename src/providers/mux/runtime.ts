@@ -12,7 +12,6 @@ import {
   optionalRecord,
   optionalString,
   requiredRecord,
-  requiredString,
 } from "../../core/cast.ts";
 import { assertPublicHttpUrl } from "../../core/request.ts";
 import {
@@ -21,6 +20,7 @@ import {
   providerResponseError,
   providerUserAgent,
   readProviderJsonBody,
+  requiredInputString,
 } from "../provider-runtime.ts";
 
 const muxApiOrigin = "https://api.mux.com";
@@ -322,10 +322,6 @@ function muxErrorMessage(payload: unknown, status: number): string {
 
 function createMuxAuthorization(context: Pick<MuxContext, "tokenId" | "tokenSecret">): string {
   return `Basic ${Buffer.from(`${context.tokenId}:${context.tokenSecret}`, "utf8").toString("base64")}`;
-}
-
-function requiredInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, providerInputError);
 }
 
 /**

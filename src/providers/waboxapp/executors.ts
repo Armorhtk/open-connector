@@ -8,6 +8,7 @@ import {
   providerUserAgent,
   ProviderRequestError,
   requireApiKeyCredential,
+  requiredInputString,
 } from "../provider-runtime.ts";
 
 const service = "waboxapp";
@@ -124,9 +125,9 @@ async function sendChat(input: Record<string, unknown>, context: WaboxappActionC
     actionPath: "/api/send/chat",
     context,
     body: {
-      to: requireInputString(input.to, "to"),
-      custom_uid: requireInputString(input.customUid, "customUid"),
-      text: requireInputString(input.text, "text"),
+      to: requiredInputString(input.to, "to"),
+      custom_uid: requiredInputString(input.customUid, "customUid"),
+      text: requiredInputString(input.text, "text"),
     },
   });
   return normalizeWaboxappSendResult(payload);
@@ -137,11 +138,11 @@ async function sendImage(input: Record<string, unknown>, context: WaboxappAction
     actionPath: "/api/send/image",
     context,
     body: compactObject({
-      to: requireInputString(input.to, "to"),
-      custom_uid: requireInputString(input.customUid, "customUid"),
-      url: requireInputString(input.imageUrl, "imageUrl"),
-      caption: readOptionalNonEmptyString(input.caption),
-      description: readOptionalNonEmptyString(input.description),
+      to: requiredInputString(input.to, "to"),
+      custom_uid: requiredInputString(input.customUid, "customUid"),
+      url: requiredInputString(input.imageUrl, "imageUrl"),
+      caption: optionalString(input.caption),
+      description: optionalString(input.description),
     }) as Record<string, string>,
   });
   return normalizeWaboxappSendResult(payload);
@@ -152,12 +153,12 @@ async function sendLink(input: Record<string, unknown>, context: WaboxappActionC
     actionPath: "/api/send/link",
     context,
     body: compactObject({
-      to: requireInputString(input.to, "to"),
-      custom_uid: requireInputString(input.customUid, "customUid"),
-      url: requireInputString(input.linkUrl, "linkUrl"),
-      caption: readOptionalNonEmptyString(input.caption),
-      description: readOptionalNonEmptyString(input.description),
-      url_thumb: readOptionalNonEmptyString(input.urlThumb),
+      to: requiredInputString(input.to, "to"),
+      custom_uid: requiredInputString(input.customUid, "customUid"),
+      url: requiredInputString(input.linkUrl, "linkUrl"),
+      caption: optionalString(input.caption),
+      description: optionalString(input.description),
+      url_thumb: optionalString(input.urlThumb),
     }) as Record<string, string>,
   });
   return normalizeWaboxappSendResult(payload);
@@ -168,12 +169,12 @@ async function sendMedia(input: Record<string, unknown>, context: WaboxappAction
     actionPath: "/api/send/media",
     context,
     body: compactObject({
-      to: requireInputString(input.to, "to"),
-      custom_uid: requireInputString(input.customUid, "customUid"),
-      url: requireInputString(input.mediaUrl, "mediaUrl"),
-      caption: readOptionalNonEmptyString(input.caption),
-      description: readOptionalNonEmptyString(input.description),
-      url_thumb: readOptionalNonEmptyString(input.urlThumb),
+      to: requiredInputString(input.to, "to"),
+      custom_uid: requiredInputString(input.customUid, "customUid"),
+      url: requiredInputString(input.mediaUrl, "mediaUrl"),
+      caption: optionalString(input.caption),
+      description: optionalString(input.description),
+      url_thumb: optionalString(input.urlThumb),
     }) as Record<string, string>,
   });
   return normalizeWaboxappSendResult(payload);
@@ -353,20 +354,12 @@ function extractWaboxappError(payload: unknown): string | undefined {
   return record ? optionalString(record.error)?.trim() || undefined : undefined;
 }
 
-function requireInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, (message) => new ProviderRequestError(400, message));
-}
-
 function requireResponseString(value: unknown, fieldName: string): string {
   return requiredString(
     value,
     fieldName,
     () => new ProviderRequestError(502, `${fieldName} is required in Waboxapp response`),
   );
-}
-
-function readOptionalNonEmptyString(value: unknown): string | undefined {
-  return optionalString(value);
 }
 
 function readNullableString(value: unknown): string | null {

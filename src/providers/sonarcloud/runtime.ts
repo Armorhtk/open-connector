@@ -9,7 +9,6 @@ import {
   optionalRecord,
   optionalString,
   requiredRecord,
-  requiredString,
   requiredStringArray,
 } from "../../core/cast.ts";
 import {
@@ -17,6 +16,7 @@ import {
   providerUserAgent,
   ProviderRequestError,
   readProviderTextBody,
+  requiredInputString,
   runProviderRequest,
 } from "../provider-runtime.ts";
 import { sonarCloudAllowedApiBaseUrls, sonarCloudDefaultApiBaseUrl } from "./constants.ts";
@@ -55,7 +55,7 @@ export const sonarCloudActionHandlers: ProviderActionHandlers<
       context,
       path: "/projects/search",
       query: {
-        organization: readInputString(input.organization, "organization"),
+        organization: requiredInputString(input.organization, "organization"),
         q: readOptionalInputString(input.query, "query"),
         projects: joinOptionalStringList(input.projectKeys, "projectKeys"),
         analyzedBefore: readOptionalInputString(input.analyzedBefore, "analyzedBefore"),
@@ -99,7 +99,7 @@ export const sonarCloudActionHandlers: ProviderActionHandlers<
       context,
       path: "/measures/component",
       query: {
-        component: readInputString(input.componentKey, "componentKey"),
+        component: requiredInputString(input.componentKey, "componentKey"),
         metricKeys: joinRequiredStringList(input.metricKeys, "metricKeys"),
         branch: readOptionalInputString(input.branch, "branch"),
         pullRequest: readOptionalInputString(input.pullRequest, "pullRequest"),
@@ -379,10 +379,6 @@ function assertBranchAndPullRequestAreExclusive(input: Record<string, unknown>):
   }
 }
 
-function readInputString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, providerInputError);
-}
-
 function readOptionalInputString(value: unknown, fieldName: string): string | undefined {
   if (value == null) return undefined;
   const stringValue = optionalString(value);
@@ -399,7 +395,7 @@ function joinRequiredStringList(value: unknown, fieldName: string): string {
 function joinOptionalStringList(value: unknown, fieldName: string): string | undefined {
   if (value == null) return undefined;
   const values = requiredStringArray(value, fieldName, providerInputError).map((item) =>
-    readInputString(item, fieldName),
+    requiredInputString(item, fieldName),
   );
   if (values.length === 0) {
     throw new ProviderRequestError(400, `${fieldName} must be a non-empty string array`);

@@ -1,11 +1,19 @@
 import type { CredentialValidationResult } from "../../core/types.ts";
 import type { ProviderActionHandlers } from "../provider-runtime.ts";
 
-import { compactObject, optionalInteger, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import {
+  compactObject,
+  looseArray,
+  optionalInteger,
+  optionalRecord,
+  optionalString,
+  requiredString,
+} from "../../core/cast.ts";
 import {
   providerInputError,
   ProviderRequestError,
   providerUserAgent,
+  requiredInputString,
   runProviderRequest,
 } from "../provider-runtime.ts";
 
@@ -73,7 +81,7 @@ export async function validateContentstackContentManagementCredential(
     signal,
   });
   const record = requireRecord(payload, "Contentstack content types response");
-  const firstContentType = optionalRecord(readArray(record.content_types)[0]);
+  const firstContentType = optionalRecord(looseArray(record.content_types)[0]);
 
   return {
     profile: {
@@ -116,7 +124,7 @@ async function executeListContentTypes(
   });
   const record = requireRecord(payload, "Contentstack content types response");
   return {
-    contentTypes: readArray(record.content_types).map((value) => requireRecord(value, "Contentstack content type")),
+    contentTypes: looseArray(record.content_types).map((value) => requireRecord(value, "Contentstack content type")),
     count: optionalInteger(record.count) ?? null,
     raw: record,
   };
@@ -126,7 +134,7 @@ async function executeGetContentType(
   input: Record<string, unknown>,
   context: ContentstackContentManagementContext,
 ): Promise<Record<string, unknown>> {
-  const contentTypeUid = requireProviderString(input.contentTypeUid, "contentTypeUid");
+  const contentTypeUid = requiredInputString(input.contentTypeUid, "contentTypeUid");
   const payload = await requestContentstackJsonForAction({
     input,
     context,
@@ -148,7 +156,7 @@ async function executeListEntries(
   input: Record<string, unknown>,
   context: ContentstackContentManagementContext,
 ): Promise<Record<string, unknown>> {
-  const contentTypeUid = requireProviderString(input.contentTypeUid, "contentTypeUid");
+  const contentTypeUid = requiredInputString(input.contentTypeUid, "contentTypeUid");
   const payload = await requestContentstackJsonForAction({
     input,
     context,
@@ -165,7 +173,7 @@ async function executeListEntries(
   });
   const record = requireRecord(payload, "Contentstack entries response");
   return {
-    entries: readArray(record.entries).map((value) => requireRecord(value, "Contentstack entry")),
+    entries: looseArray(record.entries).map((value) => requireRecord(value, "Contentstack entry")),
     count: optionalInteger(record.count) ?? null,
     raw: record,
   };
@@ -175,8 +183,8 @@ async function executeGetEntry(
   input: Record<string, unknown>,
   context: ContentstackContentManagementContext,
 ): Promise<Record<string, unknown>> {
-  const contentTypeUid = requireProviderString(input.contentTypeUid, "contentTypeUid");
-  const entryUid = requireProviderString(input.entryUid, "entryUid");
+  const contentTypeUid = requiredInputString(input.contentTypeUid, "contentTypeUid");
+  const entryUid = requiredInputString(input.entryUid, "entryUid");
   const payload = await requestContentstackJsonForAction({
     input,
     context,
@@ -198,7 +206,7 @@ async function executeCreateEntry(
   input: Record<string, unknown>,
   context: ContentstackContentManagementContext,
 ): Promise<Record<string, unknown>> {
-  const contentTypeUid = requireProviderString(input.contentTypeUid, "contentTypeUid");
+  const contentTypeUid = requiredInputString(input.contentTypeUid, "contentTypeUid");
   const entry = requireRecord(input.entry, "Contentstack entry input");
   const payload = await requestContentstackJsonForAction({
     input,
@@ -219,8 +227,8 @@ async function executeUpdateEntry(
   input: Record<string, unknown>,
   context: ContentstackContentManagementContext,
 ): Promise<Record<string, unknown>> {
-  const contentTypeUid = requireProviderString(input.contentTypeUid, "contentTypeUid");
-  const entryUid = requireProviderString(input.entryUid, "entryUid");
+  const contentTypeUid = requiredInputString(input.contentTypeUid, "contentTypeUid");
+  const entryUid = requiredInputString(input.entryUid, "entryUid");
   const entry = requireRecord(input.entry, "Contentstack entry input");
   const payload = await requestContentstackJsonForAction({
     input,
@@ -390,18 +398,10 @@ function requireStackApiKey(input: Record<string, string>): string {
   return stackApiKey;
 }
 
-function requireProviderString(value: unknown, fieldName: string): string {
-  return requiredString(value, fieldName, providerInputError);
-}
-
 function requireRecord(value: unknown, label: string): Record<string, unknown> {
   const record = optionalRecord(value);
   if (!record) {
     throw new ProviderRequestError(502, `${label} is missing`);
   }
   return record;
-}
-
-function readArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
 }

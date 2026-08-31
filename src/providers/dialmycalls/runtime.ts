@@ -1,8 +1,13 @@
 import type { ApiKeyActionRequest, ProviderActionHandlers } from "../provider-runtime.ts";
 import type { DialMyCallsActionName } from "./actions.ts";
 
-import { compactObject, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
-import { ProviderRequestError, providerUserAgent, runProviderRequest } from "../provider-runtime.ts";
+import { compactObject, optionalRawString, optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
+import {
+  ProviderRequestError,
+  providerUserAgent,
+  requiredResponseRecord,
+  runProviderRequest,
+} from "../provider-runtime.ts";
 
 export interface DialmycallsCredentialCheck {
   providerAccountId?: string;
@@ -143,7 +148,7 @@ export async function validateDialMyCallsCredential(
     fetcher,
     phase: "validate",
   });
-  const envelope = requireObject(payload, "DialMyCalls account response");
+  const envelope = requiredResponseRecord(payload, "DialMyCalls account response");
   const account = optionalRecord(envelope.results);
   const meta = optionalRecord(envelope.meta);
 
@@ -276,7 +281,7 @@ function isFailureEnvelope(payload: unknown) {
 }
 
 function requireEnvelope(payload: unknown) {
-  const envelope = requireObject(payload, "DialMyCalls response");
+  const envelope = requiredResponseRecord(payload, "DialMyCalls response");
   if (!("results" in envelope) || !optionalRecord(envelope.meta)) {
     throw new ProviderRequestError(502, "DialMyCalls returned an invalid response envelope");
   }
@@ -285,12 +290,12 @@ function requireEnvelope(payload: unknown) {
 
 function buildContactBody(input: Record<string, unknown>) {
   return compactObject({
-    firstname: readOptionalString(input.firstname),
-    lastname: readOptionalString(input.lastname),
+    firstname: optionalRawString(input.firstname),
+    lastname: optionalRawString(input.lastname),
     phone: readRequiredString(input.phone, "phone"),
-    extension: readOptionalString(input.extension),
-    email: readOptionalString(input.email),
-    extra1: readOptionalString(input.extra1),
+    extension: optionalRawString(input.extension),
+    email: optionalRawString(input.email),
+    extra1: optionalRawString(input.extra1),
     groups: readOptionalStringArray(input.groups, "groups"),
   });
 }
@@ -318,10 +323,6 @@ function readRequiredString(value: unknown, fieldName: string) {
   return value;
 }
 
-function readOptionalString(value: unknown) {
-  return typeof value === "string" ? value : undefined;
-}
-
 function readOptionalStringArray(value: unknown, fieldName: string) {
   if (value === undefined) {
     return undefined;
@@ -337,12 +338,4 @@ function readRequiredInteger(value: unknown, fieldName: string) {
     throw new ProviderRequestError(400, `${fieldName} must be an integer`);
   }
   return value as number;
-}
-
-function requireObject(value: unknown, context: string): Record<string, unknown> {
-  const object = optionalRecord(value);
-  if (!object) {
-    throw new ProviderRequestError(502, `${context} must be an object`);
-  }
-  return object;
 }
