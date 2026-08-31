@@ -73,6 +73,7 @@ describe("runtime action HTTP results", () => {
     ["connection_not_found", 404],
     ["unknown_action", 404],
     ["rate_limited", 429],
+    ["insufficient_credit", 402],
     ["provider_error", 500],
     ["internal_error", 500],
     ["oauth_token_expired", 409],
@@ -102,6 +103,20 @@ describe("runtime action HTTP results", () => {
         },
       },
     });
+  });
+
+  it("preserves an upstream task-not-found status for invalid_input", () => {
+    expect(
+      serializeRuntimeActionResult({
+        actionId: "volcengine_ark.get_seedance_video_generation",
+        executionId: "execution-1",
+        auditPersisted: false,
+        result: {
+          ok: false,
+          error: { code: "invalid_input", message: "Task not found.", details: { status: 404 } },
+        },
+      }).status,
+    ).toBe(404);
   });
 
   it("serializes runtime failures for persistence", () => {

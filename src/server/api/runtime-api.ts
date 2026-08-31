@@ -3,9 +3,9 @@ import type { ConnectionError, ConnectionSummary } from "../../connection-servic
 import type { ExecutionResult, ProviderScenario } from "../../core/types.ts";
 import type { Context } from "hono";
 
-import { requiredRecord } from "../../core/cast.ts";
+import { optionalInteger, optionalRecord, requiredRecord } from "../../core/cast.ts";
 
-type RuntimeStatus = 400 | 401 | 403 | 404 | 409 | 413 | 429 | 500 | 501;
+type RuntimeStatus = 400 | 401 | 402 | 403 | 404 | 409 | 413 | 429 | 500 | 501;
 
 export type RuntimeResponseMeta = Record<string, unknown>;
 
@@ -199,7 +199,7 @@ export function serializeRuntimeActionResult(input: RuntimeActionResultInput): R
   }
 
   return serializeRuntimeFailure({
-    status: mapExecutionErrorStatus(result.error?.code),
+    status: mapExecutionErrorStatus(result.error?.code, result.error?.details),
     errorCode: result.error?.code ?? "provider_error",
     message: result.error?.message ?? "Action execution failed.",
     data: result.error?.details ?? null,
@@ -244,7 +244,13 @@ export function mapConnectionErrorStatus(error: ConnectionError): 400 | 404 | 40
   return 400;
 }
 
-function mapExecutionErrorStatus(code: string | undefined): RuntimeStatus {
+function mapExecutionErrorStatus(code: string | undefined, details?: unknown): RuntimeStatus {
+  if (code === "insufficient_credit") {
+    return 402;
+  }
+  if (code === "invalid_input" && optionalInteger(optionalRecord(details)?.status) === 404) {
+    return 404;
+  }
   if (code === "internal_error" || code === "provider_error" || code === "executor_unavailable") {
     return 500;
   }
@@ -267,6 +273,7 @@ function isRuntimeStatus(value: unknown): value is RuntimeStatus {
   return (
     value === 400 ||
     value === 401 ||
+    value === 402 ||
     value === 403 ||
     value === 404 ||
     value === 409 ||
