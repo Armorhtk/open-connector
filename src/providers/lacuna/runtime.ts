@@ -8,9 +8,11 @@ import {
   providerUserAgent,
   readProviderJsonBody,
   runProviderRequest,
+  setSearchParams,
 } from "../provider-runtime.ts";
 
 export const lacunaBaseUrl = "https://lacuna.tiptreesystems.com";
+const lacunaOrigin = new URL(lacunaBaseUrl).origin;
 const retryableStatuses = new Set([429, 502, 503, 504]);
 const maxRetries = 2;
 const maxResponseBytes = 8 * 1024 * 1024;
@@ -41,14 +43,37 @@ const rankingAliases: Record<string, string> = {
   bm25: "bm25_title_abstract",
   bm25_title_abstract: "bm25_title_abstract",
 };
-const allowedFields = new Set(["title", "abstract", "summary", "concepts", "name", "top_names", "venue"]);
+// Lexical fields the Lacuna ranker accepts, mapped to the search types whose
+// documents actually carry them. Requesting a field the target type lacks makes
+// the server match nothing on that leg and silently fall back to substring
+// ranking, so the combination is rejected locally instead.
+const searchFieldTypes = new Map<string, ReadonlySet<string>>([
+  ["title", new Set(["paper", "cluster", "venue", "hypothesis"])],
+  ["abstract", new Set(["paper"])],
+  ["summary", new Set(["paper"])],
+  ["concepts", new Set(["paper"])],
+  ["name", new Set(["author", "institution", "venue"])],
+  ["top_names", new Set(["cluster", "hypothesis"])],
+  ["venue", new Set(["paper", "venue"])],
+]);
+// The leading `(?<!\w)` keeps paths inside absolute third-party URLs
+// (`https://arxiv.org/pdf/x`) from being rewritten onto the Lacuna origin.
 const markdownPathPattern =
-  /\/(author|cluster|direction|figures|hypothesis|institution|node|paper|pdf|venue)\/[^\s)\]"']+/g;
+  /(?<!\w)\/(?:author|cluster|direction|figures|hypothesis|institution|node|paper|pdf|venue)\/[^\s)\]"'>]+/g;
+const markdownTrailingPunctuationPattern = /[.,;:]+$/;
 const partialDatePattern = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/;
+// Live direction URLs fuse the id into the slug (`/direction/{slug}-{id}`) and
+// may carry a trailing `/md` Markdown segment.
+const directionRoutePattern = /\/(?:direction|cluster)\/(?:[^/?#]*-)?(\d+)(?:[/?#]|$)/;
+const trailingNumericSegmentPattern = /(?:^|\/)(\d+)\/?$/;
+const hypothesisRoutePattern = /\/hypothesis\/([^/?#]+)/;
+const hypothesisIdPattern = /([0-9a-fA-F]{16})$/;
+const routeIdPattern = /^[A-Za-z0-9_.:-]+$/;
 
 export interface LacunaActionContext {
   fetcher: ProviderFetch;
   signal?: AbortSignal;
+  sleep?(delayMs: number, signal?: AbortSignal): Promise<void>;
 }
 
 interface PartialDate {
@@ -71,19 +96,22 @@ export const lacunaActionHandlers: ProviderActionHandlers<"lacuna", ProviderRunt
 
     const limit = readBoundedInteger(input.limit, "limit", 1, 50, 10);
     const offset = readBoundedInteger(input.offset, "offset", 0, Number.MAX_SAFE_INTEGER, 0);
-    const params = new URLSearchParams({
-      q: query,
-      type: searchType,
-      limit: String(limit),
-      offset: String(offset),
-      sort,
-      ranking_profile: rankingProfile,
-    });
-    setOptionalParam(params, "date_from", dateFrom?.value);
-    setOptionalParam(params, "date_to", dateTo?.value);
-    setOptionalParam(params, "venue", input.venue);
-    if (fields) params.set("fields", fields);
-    return requestLacunaJson("/api/v1/search", params, context);
+    return requestLacunaJson(
+      "/api/v1/search",
+      {
+        q: query,
+        type: searchType,
+        limit: String(limit),
+        offset: String(offset),
+        sort,
+        ranking_profile: rankingProfile,
+        date_from: dateFrom?.value,
+        date_to: dateTo?.value,
+        venue: optionalString(input.venue),
+        fields,
+      },
+      context,
+    );
   },
 
   async get_paper(input, context): Promise<unknown> {
@@ -100,21 +128,21 @@ export const lacunaActionHandlers: ProviderActionHandlers<"lacuna", ProviderRunt
         : view === "full"
           ? `/api/v1/papers/${encodeURIComponent(paperId)}`
           : `/api/v1/papers/${encodeURIComponent(paperId)}/${view}`;
-    const params = new URLSearchParams();
+    const query: Record<string, string | undefined> = {};
     if (view === "context") {
-      params.set("view", "compact");
+      query.view = "compact";
       const figureLimit = readOptionalBoundedInteger(input.figureLimit, "figureLimit", 0, Number.MAX_SAFE_INTEGER);
-      if (figureLimit !== undefined) params.set("figure_limit", String(figureLimit));
+      if (figureLimit !== undefined) query.figure_limit = String(figureLimit);
     }
-    return withStableId(await requestLacunaJson(path, params, context), "artifact_id", paperId);
+    return { ...(await requestLacunaJson(path, query, context)), artifact_id: paperId };
   },
 
   async get_direction(input, context): Promise<unknown> {
     const directionId = readDirectionId(input.directionIdOrUrl);
     const view = readEnum(input.view, "view", ["context", "full"], "context");
     const path = view === "context" ? `/api/v1/context/direction/${directionId}` : `/api/v1/clusters/${directionId}`;
-    const params = view === "context" ? new URLSearchParams({ view: "compact" }) : new URLSearchParams();
-    return withStableId(await requestLacunaJson(path, params, context), "cluster_id", directionId);
+    const query = view === "context" ? { view: "compact" } : {};
+    return { ...(await requestLacunaJson(path, query, context)), cluster_id: directionId };
   },
 
   async get_direction_papers(input, context): Promise<unknown> {
@@ -122,43 +150,46 @@ export const lacunaActionHandlers: ProviderActionHandlers<"lacuna", ProviderRunt
     const page = readBoundedInteger(input.page, "page", 1, Number.MAX_SAFE_INTEGER, 1);
     const limit = readBoundedInteger(input.limit, "limit", 1, 100, 24);
     const view = readEnum(input.view, "view", ["compact", "full"], "compact");
-    const params = new URLSearchParams({
-      page: String(page),
-      limit: String(limit),
-      view: view === "full" ? "complete" : "compact",
-    });
-    const payload = await requestLacunaJson(`/api/v1/clusters/${directionId}/papers`, params, context);
-    return withStableId(payload, "cluster_id", directionId);
+    const payload = await requestLacunaJson(
+      `/api/v1/clusters/${directionId}/papers`,
+      { page: String(page), limit: String(limit), view: view === "full" ? "complete" : "compact" },
+      context,
+    );
+    return { ...payload, cluster_id: directionId };
   },
 
   async get_author_context(input, context): Promise<unknown> {
     const authorId = readRouteId(input.authorIdOrUrl, "authorIdOrUrl", "author");
     const view = readEnum(input.view, "view", ["context", "full"], "context");
     const includeNeighbors = optionalBoolean(input.includeNeighbors) ?? false;
-    const params = new URLSearchParams({ include_neighbors: String(includeNeighbors) });
-    if (view === "context") params.set("view", "compact");
-    const payload = await requestLacunaJson(`/api/v1/context/author/${encodeURIComponent(authorId)}`, params, context);
-    return withStableId(payload, "author_id", authorId);
+    const payload = await requestLacunaJson(
+      `/api/v1/context/author/${encodeURIComponent(authorId)}`,
+      { include_neighbors: String(includeNeighbors), view: view === "context" ? "compact" : undefined },
+      context,
+    );
+    return { ...payload, author_id: authorId };
   },
 
   async get_hypothesis(input, context): Promise<unknown> {
     const hypothesisId = readHypothesisId(input.hypothesisIdOrUrl);
     const view = readEnum(input.view, "view", ["context", "full"], "context");
     const path =
-      view === "context" ? `/api/v1/context/hypothesis/${hypothesisId}` : `/api/v1/hypotheses/${hypothesisId}`;
-    const params = view === "context" ? new URLSearchParams({ view: "compact" }) : new URLSearchParams();
-    return withStableId(await requestLacunaJson(path, params, context), "hypothesis_id", hypothesisId);
+      view === "context"
+        ? `/api/v1/context/hypothesis/${encodeURIComponent(hypothesisId)}`
+        : `/api/v1/hypotheses/${encodeURIComponent(hypothesisId)}`;
+    const query = view === "context" ? { view: "compact" } : {};
+    return { ...(await requestLacunaJson(path, query, context)), hypothesis_id: hypothesisId };
   },
 };
 
 async function requestLacunaJson(
   path: string,
-  params: URLSearchParams,
+  query: Record<string, string | undefined>,
   context: LacunaActionContext,
 ): Promise<Record<string, unknown>> {
   return runProviderRequest({ label: "Lacuna", signal: context.signal }, async (signal) => {
     const url = new URL(path, lacunaBaseUrl);
-    url.search = params.toString();
+    setSearchParams(url, query);
 
     for (let attempt = 0; ; attempt += 1) {
       const response = await context.fetcher(url, {
@@ -167,13 +198,16 @@ async function requestLacunaJson(
       });
       if (retryableStatuses.has(response.status) && attempt < maxRetries) {
         await response.body?.cancel();
-        await waitForRetry(response.headers.get("retry-after"), attempt, signal);
+        await waitForRetry(context, response.headers.get("retry-after"), attempt, signal);
         continue;
       }
 
       const payload = await readProviderJsonBody(response, {
         emptyBody: null,
         invalidJsonMessage: "Lacuna returned invalid JSON.",
+        // A gateway error page is not JSON; keep its real status instead of
+        // reporting the parse failure as a 502.
+        invalidJsonFallback: response.ok ? undefined : (text) => ({ detail: text.slice(0, 500) }),
         maxBytes: maxResponseBytes,
       });
       if (!response.ok) {
@@ -204,8 +238,15 @@ function validateSearchOptions(searchType: string, rankingProfile: string, sort:
   if (!fields) return;
   for (const weightedField of fields.split(",")) {
     const [field, rawWeight, ...extra] = weightedField.trim().split("^");
-    if (!field || extra.length > 0 || !allowedFields.has(field)) {
+    const supportedTypes = field ? searchFieldTypes.get(field) : undefined;
+    if (!field || extra.length > 0 || !supportedTypes) {
       throw providerInputError(`Unsupported Lacuna search field: ${weightedField.trim() || "empty field"}.`);
+    }
+    // The "all" search type spans every document type, so any field applies.
+    if (searchType !== "all" && !supportedTypes.has(searchType)) {
+      throw providerInputError(
+        `Search field ${field} does not exist on ${searchType} results; it applies to: ${[...supportedTypes].sort().join(", ")}.`,
+      );
     }
     if (rawWeight !== undefined) {
       const weight = Number(rawWeight);
@@ -230,7 +271,7 @@ function readDirectionId(value: unknown): number {
   if (typeof value === "number" && Number.isInteger(value) && value > 0) return value;
   const input = requiredString(value, "directionIdOrUrl", providerInputError);
   const candidate = readRouteCandidate(input, "directionIdOrUrl");
-  const match = candidate.match(/(?:^|\/)(\d+)\/?$/);
+  const match = candidate.match(directionRoutePattern) ?? candidate.match(trailingNumericSegmentPattern);
   const directionId = match ? Number(match[1]) : Number(candidate);
   if (!Number.isSafeInteger(directionId) || directionId <= 0) {
     throw providerInputError("directionIdOrUrl must contain a positive Lacuna direction identifier.");
@@ -241,7 +282,10 @@ function readDirectionId(value: unknown): number {
 function readHypothesisId(value: unknown): string {
   const input = requiredString(value, "hypothesisIdOrUrl", providerInputError);
   const candidate = readRouteCandidate(input, "hypothesisIdOrUrl");
-  const match = candidate.match(/(?:^|\/)([0-9a-fA-F]{16})\/?$/);
+  // Live hypothesis URLs fuse the id into the slug (`/hypothesis/{slug}-{id}`)
+  // and may carry a trailing `/md` Markdown segment.
+  const segment = candidate.match(hypothesisRoutePattern)?.[1] ?? candidate;
+  const match = segment.match(hypothesisIdPattern);
   if (!match) throw providerInputError("hypothesisIdOrUrl must contain a 16-character Lacuna hypothesis ID.");
   return match[1].toLowerCase();
 }
@@ -249,13 +293,22 @@ function readHypothesisId(value: unknown): string {
 function readRouteId(value: unknown, fieldName: string, route: string): string {
   const input = requiredString(value, fieldName, providerInputError);
   const candidate = readRouteCandidate(input, fieldName);
-  if (!candidate.includes("/")) return candidate;
+  if (!candidate.includes("/")) return readRouteIdShape(candidate, fieldName, route);
   const parts = candidate.split("/").filter(Boolean);
   const routeIndex = parts.indexOf(route);
   if (routeIndex < 0 || routeIndex === parts.length - 1) {
     throw providerInputError(`${fieldName} must be a Lacuna ${route} ID or URL.`);
   }
-  return decodeURIComponent(parts.at(-1) ?? "");
+  return readRouteIdShape(decodeRouteText(parts.at(-1) ?? "", fieldName), fieldName, route);
+}
+
+function readRouteIdShape(id: string, fieldName: string, route: string): string {
+  // Dots survive encodeURIComponent, so an unchecked ".." would collapse the
+  // request path instead of addressing a record.
+  if (id === "." || id === ".." || !routeIdPattern.test(id)) {
+    throw providerInputError(`${fieldName} must be a Lacuna ${route} ID or URL.`);
+  }
+  return id;
 }
 
 function readRouteCandidate(input: string, fieldName: string): string {
@@ -266,21 +319,36 @@ function readRouteCandidate(input: string, fieldName: string): string {
   } catch {
     throw providerInputError(`${fieldName} must be a valid Lacuna ID or URL.`);
   }
-  if (url.origin !== lacunaBaseUrl) throw providerInputError(`${fieldName} must use ${lacunaBaseUrl}.`);
-  return decodeURIComponent(url.pathname);
+  if (url.origin !== lacunaOrigin) throw providerInputError(`${fieldName} must use ${lacunaBaseUrl}.`);
+  return decodeRouteText(url.pathname, fieldName);
+}
+
+function decodeRouteText(value: string, fieldName: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    throw providerInputError(`${fieldName} must be a valid Lacuna ID or URL.`);
+  }
 }
 
 function readAlias(value: unknown, fieldName: string, aliases: Record<string, string>, fallback: string): string {
-  const raw = optionalString(value)?.toLowerCase() ?? fallback;
-  const normalized = aliases[raw];
-  if (!normalized) throw providerInputError(`${fieldName} has an unsupported value: ${raw}.`);
-  return normalized;
+  const raw = readOptionalText(value, fieldName)?.toLowerCase() ?? fallback;
+  if (!Object.hasOwn(aliases, raw)) throw providerInputError(`${fieldName} has an unsupported value: ${raw}.`);
+  return aliases[raw]!;
 }
 
 function readEnum<T extends string>(value: unknown, fieldName: string, allowed: readonly T[], fallback: T): T {
-  const raw = optionalString(value) ?? fallback;
+  const raw = readOptionalText(value, fieldName) ?? fallback;
   if (!allowed.includes(raw as T)) throw providerInputError(`${fieldName} has an unsupported value: ${raw}.`);
   return raw as T;
+}
+
+function readOptionalText(value: unknown, fieldName: string): string | undefined {
+  if (value === undefined) return undefined;
+  const text = optionalString(value);
+  // Falling back to the default here would silently ignore a wrong-typed input.
+  if (text === undefined) throw providerInputError(`${fieldName} must be a non-empty string.`);
+  return text;
 }
 
 function readBoundedInteger(value: unknown, fieldName: string, min: number, max: number, fallback: number): number {
@@ -291,7 +359,11 @@ function readOptionalBoundedInteger(value: unknown, fieldName: string, min: numb
   if (value === undefined) return undefined;
   const number = optionalInteger(value);
   if (number === undefined || number < min || number > max) {
-    throw providerInputError(`${fieldName} must be an integer between ${min} and ${max}.`);
+    throw providerInputError(
+      max === Number.MAX_SAFE_INTEGER
+        ? `${fieldName} must be an integer greater than or equal to ${min}.`
+        : `${fieldName} must be an integer between ${min} and ${max}.`,
+    );
   }
   return number;
 }
@@ -336,23 +408,12 @@ function validateDateRange(dateFrom?: PartialDate, dateTo?: PartialDate): void {
   }
 }
 
-function setOptionalParam(params: URLSearchParams, name: string, value: unknown): void {
-  const text = optionalString(value);
-  if (text) params.set(name, text);
-}
-
-function withStableId(
-  payload: Record<string, unknown>,
-  fieldName: string,
-  value: string | number,
-): Record<string, unknown> {
-  return { ...payload, [fieldName]: value };
-}
-
 function normalizeLacunaRecord(record: Record<string, unknown>): Record<string, unknown> {
   const output: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(record)) {
-    if (key === "_mcp_meta") continue;
+    // An own "__proto__" key would reach the Object.prototype setter and poison
+    // the prototype of the record handed back to the caller.
+    if (key === "_mcp_meta" || key === "__proto__") continue;
     output[key] = normalizeLacunaValue(value, key);
   }
   return output;
@@ -363,15 +424,35 @@ function normalizeLacunaValue(value: unknown, key: string): unknown {
   const record = optionalRecord(value);
   if (record) return normalizeLacunaRecord(record);
   if (typeof value !== "string") return value;
-  if ((key === "url" || key.endsWith("_url")) && value.startsWith("/")) {
-    return new URL(value, lacunaBaseUrl).toString();
+  if (key === "url" || key.endsWith("_url")) {
+    return absolutizeLacunaPath(value) ?? value;
   }
   if (
     ["article_markdown", "content", "description", "markdown", "profile_markdown", "summary_markdown"].includes(key)
   ) {
-    return value.replace(markdownPathPattern, (path) => new URL(path, lacunaBaseUrl).toString());
+    return value.replace(markdownPathPattern, (matched) => {
+      const path = matched.replace(markdownTrailingPunctuationPattern, "");
+      return (absolutizeLacunaPath(path) ?? path) + matched.slice(path.length);
+    });
   }
   return value;
+}
+
+/**
+ * Resolve a Lacuna-relative path against the Lacuna site, or return undefined
+ * when the value is not a same-origin relative path. Protocol-relative values
+ * (`//host/x`) and backslash forms resolve off-origin, so the result is checked
+ * rather than trusted.
+ */
+function absolutizeLacunaPath(value: string): string | undefined {
+  if (!value.startsWith("/") || value.startsWith("//")) return undefined;
+  let url: URL;
+  try {
+    url = new URL(value, lacunaBaseUrl);
+  } catch {
+    return undefined;
+  }
+  return url.origin === lacunaOrigin ? url.toString() : undefined;
 }
 
 function readErrorMessage(payload: unknown): string | undefined {
@@ -380,22 +461,45 @@ function readErrorMessage(payload: unknown): string | undefined {
   return optionalString(record.detail) ?? optionalString(record.message) ?? optionalString(record.error);
 }
 
-async function waitForRetry(retryAfter: string | null, attempt: number, signal: AbortSignal): Promise<void> {
+async function waitForRetry(
+  context: LacunaActionContext,
+  retryAfter: string | null,
+  attempt: number,
+  signal: AbortSignal,
+): Promise<void> {
   const retryAfterMs = readRetryAfterMs(retryAfter);
-  const delayMs = retryAfterMs ?? 500 * 2 ** attempt;
-  await new Promise<void>((resolve, reject) => {
+  await (context.sleep ?? sleepBeforeRetry)(retryAfterMs ?? 500 * 2 ** attempt, signal);
+}
+
+/**
+ * Wait out a Lacuna retry delay, rejecting as soon as the request is aborted.
+ */
+export function sleepBeforeRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(readAbortReason(signal));
+  return new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => {
-      signal.removeEventListener("abort", abort);
+      signal?.removeEventListener("abort", abort);
       resolve();
     }, delayMs);
     const abort = (): void => {
       clearTimeout(timeout);
-      signal.removeEventListener("abort", abort);
-      reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+      signal?.removeEventListener("abort", abort);
+      reject(readAbortReason(signal));
     };
-    if (signal.aborted) abort();
-    else signal.addEventListener("abort", abort, { once: true });
+    signal?.addEventListener("abort", abort, { once: true });
   });
+}
+
+/**
+ * Skip the Lacuna retry delay. Tests and validators pass their own fetcher and
+ * must not wait out real backoff.
+ */
+export function skipRetryDelay(_delayMs: number, signal?: AbortSignal): Promise<void> {
+  return signal?.aborted ? Promise.reject(readAbortReason(signal)) : Promise.resolve();
+}
+
+function readAbortReason(signal?: AbortSignal): unknown {
+  return signal?.reason ?? new DOMException("Aborted", "AbortError");
 }
 
 function readRetryAfterMs(value: string | null): number | undefined {

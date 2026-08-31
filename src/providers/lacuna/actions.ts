@@ -219,7 +219,7 @@ export const lacunaActions: ActionDefinition[] = [
           "bm25_title_abstract",
         ]),
         fields: s.nonEmptyString(
-          "Optional comma-separated lexical fields with optional weights, such as title^4,abstract.",
+          "Optional comma-separated lexical fields with optional weights, such as title^4,abstract. Each field must exist on the searched type: title (paper, cluster, venue, hypothesis), abstract/summary/concepts (paper), name (author, institution, venue), top_names (cluster, hypothesis), venue (paper, venue).",
         ),
       },
       {
@@ -298,7 +298,7 @@ export const lacunaActions: ActionDefinition[] = [
       {
         authorIdOrUrl: s.nonEmptyString("A Lacuna author ID or Lacuna author URL."),
         view: contextViewSchema,
-        includeNeighbors: s.boolean("Whether to include similar researchers in the full author context."),
+        includeNeighbors: s.boolean("Whether to include similar researchers in the author context."),
       },
       { optional: ["view", "includeNeighbors"] },
     ),
