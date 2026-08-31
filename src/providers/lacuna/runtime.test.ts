@@ -152,6 +152,9 @@ describe("Lacuna provider runtime", () => {
     await expect(
       lacunaActionHandlers.search({ query: "graph learning", searchType: 123 }, { fetcher }),
     ).rejects.toMatchObject({ status: 400 });
+    await expect(
+      lacunaActionHandlers.search({ query: "graph learning", venue: 123 }, { fetcher }),
+    ).rejects.toMatchObject({ status: 400 });
     expect(fetcher).not.toHaveBeenCalled();
   });
 

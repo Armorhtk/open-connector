@@ -107,7 +107,7 @@ export const lacunaActionHandlers: ProviderActionHandlers<"lacuna", ProviderRunt
         ranking_profile: rankingProfile,
         date_from: dateFrom?.value,
         date_to: dateTo?.value,
-        venue: optionalString(input.venue),
+        venue: readOptionalText(input.venue, "venue"),
         fields,
       },
       context,
