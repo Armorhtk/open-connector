@@ -44,6 +44,7 @@ const rankingAliases: Record<string, string> = {
 const allowedFields = new Set(["title", "abstract", "summary", "concepts", "name", "top_names", "venue"]);
 const markdownPathPattern =
   /\/(author|cluster|direction|figures|hypothesis|institution|node|paper|pdf|venue)\/[^\s)\]"']+/g;
+const partialDatePattern = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/;
 
 export interface LacunaActionContext {
   fetcher: ProviderFetch;
@@ -57,6 +58,8 @@ export const lacunaActionHandlers: ProviderActionHandlers<"lacuna", ProviderRunt
     const rankingProfile = readAlias(input.rankingProfile, "rankingProfile", rankingAliases, "default");
     const sort = readEnum(input.sort, "sort", ["relevance", "year_desc", "year_asc"], "relevance");
     const fields = optionalString(input.fields);
+    const dateFrom = readPartialDate(input.dateFrom, "dateFrom");
+    const dateTo = readPartialDate(input.dateTo, "dateTo");
     validateSearchOptions(searchType, rankingProfile, sort, fields);
 
     const limit = readBoundedInteger(input.limit, "limit", 1, 50, 10);
@@ -69,8 +72,8 @@ export const lacunaActionHandlers: ProviderActionHandlers<"lacuna", ProviderRunt
       sort,
       ranking_profile: rankingProfile,
     });
-    setOptionalParam(params, "date_from", input.dateFrom);
-    setOptionalParam(params, "date_to", input.dateTo);
+    setOptionalParam(params, "date_from", dateFrom);
+    setOptionalParam(params, "date_to", dateTo);
     setOptionalParam(params, "venue", input.venue);
     if (fields) params.set("fields", fields);
     return requestLacunaJson("/api/v1/search", params, context);
@@ -284,6 +287,26 @@ function readOptionalBoundedInteger(value: unknown, fieldName: string, min: numb
     throw providerInputError(`${fieldName} must be an integer between ${min} and ${max}.`);
   }
   return number;
+}
+
+function readPartialDate(value: unknown, fieldName: string): string | undefined {
+  if (value === undefined) return undefined;
+  const text = optionalString(value);
+  const match = text?.match(partialDatePattern);
+  if (!text || !match) {
+    throw providerInputError(`${fieldName} must be a valid date in YYYY, YYYY-MM, or YYYY-MM-DD format.`);
+  }
+  if (!match[2] || !match[3]) return text;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (month < 1 || month > 12 || day < 1 || day > daysInMonth[month - 1]!) {
+    throw providerInputError(`${fieldName} must be a valid date in YYYY, YYYY-MM, or YYYY-MM-DD format.`);
+  }
+  return text;
 }
 
 function setOptionalParam(params: URLSearchParams, name: string, value: unknown): void {

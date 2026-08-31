@@ -48,6 +48,33 @@ describe("Lacuna provider runtime", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
+  it("accepts valid year, year-month, and calendar date bounds", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      Response.json({ query: "graph learning", type_filter: "all", total_results: 0, results: [] }),
+    );
+
+    await lacunaActionHandlers.search({ query: "graph learning", dateFrom: "2024", dateTo: "2024-02" }, { fetcher });
+    await lacunaActionHandlers.search(
+      { query: "graph learning", dateFrom: "2024-02-29", dateTo: "2024-12-31" },
+      { fetcher },
+    );
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects impossible calendar date bounds before sending a request", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+
+    for (const input of [
+      { query: "graph learning", dateFrom: "2025-02-29" },
+      { query: "graph learning", dateFrom: "2024-02-30" },
+      { query: "graph learning", dateTo: "2025-04-31" },
+    ]) {
+      await expect(lacunaActionHandlers.search(input, { fetcher })).rejects.toMatchObject({ status: 400 });
+    }
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("gets compact paper context and removes MCP-only metadata", async () => {
     const fetcher = vi.fn<typeof fetch>(async (request) => {
       const url = new URL(String(request));
