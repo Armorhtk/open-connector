@@ -108,7 +108,7 @@ describe("runtime action HTTP results", () => {
   it("preserves an upstream task-not-found status for invalid_input", () => {
     expect(
       serializeRuntimeActionResult({
-        actionId: "volcengine_ark.get_seedance_video_generation",
+        actionId: "example.get_task",
         executionId: "execution-1",
         auditPersisted: false,
         result: {
