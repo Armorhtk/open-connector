@@ -53,19 +53,33 @@ describe("Lacuna provider runtime", () => {
       Response.json({ query: "graph learning", type_filter: "all", total_results: 0, results: [] }),
     );
 
-    await lacunaActionHandlers.search({ query: "graph learning", dateFrom: "2024", dateTo: "2024-02" }, { fetcher });
-    await lacunaActionHandlers.search(
-      { query: "graph learning", dateFrom: "2024-02-29", dateTo: "2024-12-31" },
-      { fetcher },
-    );
+    const bounds = [
+      { dateFrom: "0001", dateTo: "0001" },
+      { dateFrom: "1900-02-28", dateTo: "1900-02" },
+      { dateFrom: "2000-02-29", dateTo: "2000-12-31" },
+      { dateFrom: "2024", dateTo: "2024-02" },
+      { dateFrom: "2024-02-29", dateTo: "2024-12-31" },
+      { dateFrom: "9999", dateTo: "9999-12-31" },
+    ];
+    for (const input of bounds) {
+      await lacunaActionHandlers.search({ query: "graph learning", ...input }, { fetcher });
+    }
 
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenCalledTimes(bounds.length);
   });
 
-  it("rejects impossible calendar date bounds before sending a request", async () => {
+  it("rejects malformed and impossible calendar date bounds before sending a request", async () => {
     const fetcher = vi.fn<typeof fetch>();
 
     for (const input of [
+      { query: "graph learning", dateFrom: "0000" },
+      { query: "graph learning", dateFrom: "2024-00" },
+      { query: "graph learning", dateTo: "2024-13" },
+      { query: "graph learning", dateFrom: "2024-1" },
+      { query: "graph learning", dateTo: "2024-01-1" },
+      { query: "graph learning", dateFrom: "2024-01-00" },
+      { query: "graph learning", dateTo: "2024-01-32" },
+      { query: "graph learning", dateFrom: "1900-02-29" },
       { query: "graph learning", dateFrom: "2025-02-29" },
       { query: "graph learning", dateFrom: "2024-02-30" },
       { query: "graph learning", dateTo: "2025-04-31" },
@@ -73,6 +87,34 @@ describe("Lacuna provider runtime", () => {
       await expect(lacunaActionHandlers.search(input, { fetcher })).rejects.toMatchObject({ status: 400 });
     }
     expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("rejects reversed inclusive date ranges while preserving partial-bound semantics", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      Response.json({ query: "graph learning", type_filter: "all", total_results: 0, results: [] }),
+    );
+
+    const validRanges = [
+      { dateFrom: "2024", dateTo: "2024-01" },
+      { dateFrom: "2024-12", dateTo: "2024" },
+      { dateFrom: "2024-02-29", dateTo: "2024-02" },
+      { dateFrom: "2024-02", dateTo: "2024-02-01" },
+    ];
+    for (const input of validRanges) {
+      await lacunaActionHandlers.search({ query: "graph learning", ...input }, { fetcher });
+    }
+
+    for (const input of [
+      { dateFrom: "2025", dateTo: "2024" },
+      { dateFrom: "2024-03", dateTo: "2024-02" },
+      { dateFrom: "2024-03-01", dateTo: "2024-02" },
+      { dateFrom: "2024-02-02", dateTo: "2024-02-01" },
+    ]) {
+      await expect(
+        lacunaActionHandlers.search({ query: "graph learning", ...input }, { fetcher }),
+      ).rejects.toMatchObject({ status: 400 });
+    }
+    expect(fetcher).toHaveBeenCalledTimes(validRanges.length);
   });
 
   it("gets compact paper context and removes MCP-only metadata", async () => {

@@ -51,6 +51,12 @@ export interface LacunaActionContext {
   signal?: AbortSignal;
 }
 
+interface PartialDate {
+  value: string;
+  earliestDay: number;
+  latestDay: number;
+}
+
 export const lacunaActionHandlers: ProviderActionHandlers<"lacuna", ProviderRuntimeHandler<LacunaActionContext>> = {
   async search(input, context): Promise<unknown> {
     const query = requiredString(input.query, "query", providerInputError);
@@ -60,6 +66,7 @@ export const lacunaActionHandlers: ProviderActionHandlers<"lacuna", ProviderRunt
     const fields = optionalString(input.fields);
     const dateFrom = readPartialDate(input.dateFrom, "dateFrom");
     const dateTo = readPartialDate(input.dateTo, "dateTo");
+    validateDateRange(dateFrom, dateTo);
     validateSearchOptions(searchType, rankingProfile, sort, fields);
 
     const limit = readBoundedInteger(input.limit, "limit", 1, 50, 10);
@@ -72,8 +79,8 @@ export const lacunaActionHandlers: ProviderActionHandlers<"lacuna", ProviderRunt
       sort,
       ranking_profile: rankingProfile,
     });
-    setOptionalParam(params, "date_from", dateFrom);
-    setOptionalParam(params, "date_to", dateTo);
+    setOptionalParam(params, "date_from", dateFrom?.value);
+    setOptionalParam(params, "date_to", dateTo?.value);
     setOptionalParam(params, "venue", input.venue);
     if (fields) params.set("fields", fields);
     return requestLacunaJson("/api/v1/search", params, context);
@@ -289,24 +296,44 @@ function readOptionalBoundedInteger(value: unknown, fieldName: string, min: numb
   return number;
 }
 
-function readPartialDate(value: unknown, fieldName: string): string | undefined {
+function readPartialDate(value: unknown, fieldName: string): PartialDate | undefined {
   if (value === undefined) return undefined;
   const text = optionalString(value);
   const match = text?.match(partialDatePattern);
   if (!text || !match) {
     throw providerInputError(`${fieldName} must be a valid date in YYYY, YYYY-MM, or YYYY-MM-DD format.`);
   }
-  if (!match[2] || !match[3]) return text;
 
   const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
-  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-  if (month < 1 || month > 12 || day < 1 || day > daysInMonth[month - 1]!) {
+  const month = match[2] ? Number(match[2]) : undefined;
+  const day = match[3] ? Number(match[3]) : undefined;
+  if (year < 1 || (month !== undefined && (month < 1 || month > 12))) {
     throw providerInputError(`${fieldName} must be a valid date in YYYY, YYYY-MM, or YYYY-MM-DD format.`);
   }
-  return text;
+
+  const startMonth = month ?? 1;
+  const endMonth = month ?? 12;
+  const endOfMonth = readDaysInMonth(year, endMonth);
+  if (day !== undefined && (day < 1 || day > endOfMonth)) {
+    throw providerInputError(`${fieldName} must be a valid date in YYYY, YYYY-MM, or YYYY-MM-DD format.`);
+  }
+  return {
+    value: text,
+    earliestDay: year * 10_000 + startMonth * 100 + (day ?? 1),
+    latestDay: year * 10_000 + endMonth * 100 + (day ?? endOfMonth),
+  };
+}
+
+function readDaysInMonth(year: number, month: number): number {
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return daysInMonth[month - 1]!;
+}
+
+function validateDateRange(dateFrom?: PartialDate, dateTo?: PartialDate): void {
+  if (dateFrom && dateTo && dateFrom.earliestDay > dateTo.latestDay) {
+    throw providerInputError("dateFrom must not be after dateTo.");
+  }
 }
 
 function setOptionalParam(params: URLSearchParams, name: string, value: unknown): void {

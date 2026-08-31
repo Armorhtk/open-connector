@@ -173,7 +173,7 @@ const hypothesisOutputSchema = s.looseRequiredObject(
 );
 
 const partialDateSchema = s.string("An inclusive publication date bound in YYYY, YYYY-MM, or YYYY-MM-DD format.", {
-  pattern: "^\\d{4}(?:-(?:0[1-9]|1[0-2])(?:-(?:0[1-9]|[12]\\d|3[01]))?)?$",
+  pattern: "^(?!0000)\\d{4}(?:-(?:0[1-9]|1[0-2])(?:-(?:0[1-9]|[12]\\d|3[01]))?)?$",
 });
 const contextViewSchema = s.stringEnum("The Lacuna response view.", ["context", "full"]);
 
