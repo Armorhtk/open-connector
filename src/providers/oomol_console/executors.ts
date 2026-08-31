@@ -14,10 +14,12 @@ import {
   ProviderRequestError,
   requireCustomCredential,
 } from "../provider-runtime.ts";
+import { createOomolConsoleMemberDirectory } from "./member-directory.ts";
 import { defaultEndpoints } from "./request.ts";
 import { executeOomolConsoleAction } from "./runtime.ts";
 
 const service = "oomol_console";
+const memberDirectory = createOomolConsoleMemberDirectory(defaultEndpoints);
 export const oomolConsoleActionHandlers: ProviderActionHandlers<
   "oomol_console",
   ProviderRuntimeHandler<OomolConsoleContext>
@@ -42,6 +44,24 @@ export const oomolConsoleActionHandlers: ProviderActionHandlers<
   },
   list_members(input, context) {
     return executeAction("list_members", input, context);
+  },
+  list_team_connections(input, context) {
+    return executeAction("list_team_connections", input, context);
+  },
+  list_connection_permission_groups(input, context) {
+    return executeAction("list_connection_permission_groups", input, context);
+  },
+  update_connection_default_permission_group(input, context) {
+    return executeAction("update_connection_default_permission_group", input, context);
+  },
+  create_connection_permission_group(input, context) {
+    return executeAction("create_connection_permission_group", input, context);
+  },
+  update_connection_permission_group(input, context) {
+    return executeAction("update_connection_permission_group", input, context);
+  },
+  delete_connection_permission_group(input, context) {
+    return executeAction("delete_connection_permission_group", input, context);
   },
   add_member(input, context) {
     return executeAction("add_member", input, context);
@@ -77,6 +97,7 @@ export const credentialValidators: CredentialValidators = {
     };
     const result = await executeOomolConsoleAction("list_teams", {}, context, context.fetcher, {
       endpoints: defaultEndpoints,
+      memberDirectory,
     });
     const teams =
       typeof result === "object" && result != null && "teams" in result && Array.isArray(result.teams)
@@ -103,6 +124,7 @@ function executeAction(
 ): Promise<unknown> {
   return executeOomolConsoleAction(actionName, input, context, context.fetcher, {
     endpoints: defaultEndpoints,
+    memberDirectory,
   });
 }
 

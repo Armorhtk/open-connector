@@ -1,7 +1,19 @@
+import type { OomolConsoleActionName } from "./actions.ts";
+import type { OomolConsoleMemberDirectory } from "./member-directory.ts";
+import type { ConnectionActionPermission, ConnectionPermissionGroupsState } from "./permission-groups.ts";
 import type { OomolConsoleEndpoints } from "./request.ts";
 
 import { ProviderRequestError } from "../provider-runtime.ts";
-import { requestOomolConsole } from "./request.ts";
+import {
+  parseConnectionPermissionGroups,
+  replacePermissionGroupMembers,
+  serializeConnectionPermissionGroups,
+  toPermissionGroupsView,
+} from "./permission-groups.ts";
+import { requestOomolConsole, requestOomolConsoleWithResponse } from "./request.ts";
+import { randomUUIDv7 } from "./uuid-v7.ts";
+
+type OomolPrincipalKind = "user" | "service_account" | "team_token";
 
 export interface OomolConsoleContext {
   accessToken: string;
@@ -10,10 +22,9 @@ export interface OomolConsoleContext {
   signal?: AbortSignal;
 }
 
-type OomolPrincipalKind = "user" | "service_account" | "team_token";
-
 export interface OomolConsoleRuntimeDeps {
   endpoints: OomolConsoleEndpoints;
+  memberDirectory: OomolConsoleMemberDirectory;
   now?: () => number;
 }
 
@@ -34,6 +45,32 @@ interface TeamMemberView {
   name?: string;
   role: "creator" | "admin" | "member" | "guest";
   disabled: boolean;
+}
+
+interface ConnectionView {
+  appId: string;
+  service: string;
+  displayName: string;
+  alias: string | null;
+  accountLabel: string | null;
+  status: "active" | "reauth_required" | "error" | "disconnected" | null;
+  isDefault: boolean;
+}
+
+interface ConfigurableActionView {
+  name: string;
+  description: string;
+  operationType: "read" | "write" | "destructive";
+  configurable: boolean;
+}
+
+interface PermissionGroupsContext {
+  connection: ConnectionView;
+  members: TeamMemberView[];
+  availableActions: ConfigurableActionView[];
+  policy: Record<string, unknown>;
+  revision: string;
+  state: ConnectionPermissionGroupsState;
 }
 
 interface BalanceLotView {
@@ -67,18 +104,18 @@ const excludedMeteringSubjects = ["SERVICE_OOMOL_CONNECTOR", "SERVICE_AUTH_LINK"
   .join(",");
 
 export async function executeOomolConsoleAction(
-  actionName: string,
+  actionName: OomolConsoleActionName,
   input: Record<string, unknown>,
   context: OomolConsoleContext,
   fetcher: typeof fetch,
   deps: OomolConsoleRuntimeDeps,
 ): Promise<unknown> {
-  const oomolToken = requireOomolToken(context);
+  const accessToken = requireOomolToken(context);
 
   switch (actionName) {
     case "get_current_scope": {
       const teamId = requireTeamId(context);
-      const team = await getTeam(teamId, oomolToken, fetcher, deps.endpoints);
+      const team = await getTeam(teamId, accessToken, fetcher, deps.endpoints);
       const kind = getPrincipalKind(context);
       return {
         scope: { kind: "team", team },
@@ -88,14 +125,14 @@ export async function executeOomolConsoleAction(
     case "list_teams": {
       requireAccountPrincipal(context);
       return {
-        teams: await listTeams(oomolToken, fetcher, deps.endpoints),
+        teams: await listTeams(accessToken, fetcher, deps.endpoints),
       };
     }
     case "get_team_summary": {
       const teamId = requireTeamId(context);
       const [team, members] = await Promise.all([
-        getTeam(teamId, oomolToken, fetcher, deps.endpoints),
-        listTeamMembers(teamId, oomolToken, fetcher, deps.endpoints),
+        getTeam(teamId, accessToken, fetcher, deps.endpoints),
+        listTeamMembers(teamId, accessToken, fetcher, deps.endpoints),
       ]);
       return {
         team,
@@ -106,16 +143,16 @@ export async function executeOomolConsoleAction(
       requireAccountPrincipal(context);
       return {
         scope: "account",
-        ...(await getAllAvailableBalance(oomolToken, fetcher, deps.endpoints)),
+        ...(await getAllAvailableBalance(accessToken, fetcher, deps.endpoints)),
       };
     }
     case "get_billing_summary": {
       requireAccountPrincipal(context);
       const period = createPeriod(input, deps.now?.() ?? Date.now());
       const [balance, billing, metering] = await Promise.all([
-        getAllAvailableBalance(oomolToken, fetcher, deps.endpoints),
-        getBillingStats(period, oomolToken, fetcher, deps.endpoints),
-        getMeteringStats(period, oomolToken, fetcher, deps.endpoints),
+        getAllAvailableBalance(accessToken, fetcher, deps.endpoints),
+        getBillingStats(period, accessToken, fetcher, deps.endpoints),
+        getMeteringStats(period, accessToken, fetcher, deps.endpoints),
       ]);
       return {
         scope: "account",
@@ -136,14 +173,50 @@ export async function executeOomolConsoleAction(
     case "get_usage_breakdown": {
       requireAccountPrincipal(context);
       const period = createPeriod(input, deps.now?.() ?? Date.now());
-      const metering = await getMeteringStats(period, oomolToken, fetcher, deps.endpoints);
+      const metering = await getMeteringStats(period, accessToken, fetcher, deps.endpoints);
       return { scope: "account", ...metering };
     }
     case "list_members": {
       const teamId = requireTeamId(context);
+      const members = await listTeamMembers(teamId, accessToken, fetcher, deps.endpoints);
       return {
-        members: await listTeamMembers(teamId, oomolToken, fetcher, deps.endpoints),
+        members: await deps.memberDirectory.enrichMembers(members, accessToken, fetcher),
       };
+    }
+    case "list_team_connections": {
+      requireUserPrincipal(context, "Connection management requires an OOMOL user principal");
+      const teamId = requireTeamId(context);
+      await requireTeamManager(context, teamId, accessToken, fetcher, deps.endpoints);
+      return {
+        connections: await listTeamConnections(teamId, accessToken, fetcher, deps.endpoints),
+      };
+    }
+    case "list_connection_permission_groups": {
+      const permissionContext = await loadPermissionGroupsContext(
+        context,
+        requireString(input.appId, "appId"),
+        accessToken,
+        fetcher,
+        deps.endpoints,
+      );
+      return buildPermissionGroupsSnapshot({
+        ...permissionContext,
+        members: await deps.memberDirectory.enrichMembers(permissionContext.members, accessToken, fetcher),
+      });
+    }
+    case "update_connection_default_permission_group":
+    case "create_connection_permission_group":
+    case "update_connection_permission_group":
+    case "delete_connection_permission_group": {
+      return mutateConnectionPermissionGroups(
+        actionName,
+        input,
+        context,
+        accessToken,
+        fetcher,
+        deps.endpoints,
+        deps.memberDirectory,
+      );
     }
     case "add_member": {
       requireUserPrincipal(context, "Adding an OOMOL team member requires a user principal");
@@ -153,7 +226,7 @@ export async function executeOomolConsoleAction(
         endpoints: deps.endpoints,
         endpoint: "relationControl",
         path: `/v1/teams/${encodeURIComponent(teamId)}/members`,
-        accessToken: oomolToken,
+        accessToken,
         fetcher,
         method: "POST",
         body: { user_id: userId, role: "member" },
@@ -168,7 +241,7 @@ export async function executeOomolConsoleAction(
         endpoints: deps.endpoints,
         endpoint: "connector",
         path: `/v1/connections/by-id/${encodeURIComponent(appId)}/executions`,
-        accessToken: oomolToken,
+        accessToken,
         fetcher,
         teamId,
         query: {
@@ -182,18 +255,341 @@ export async function executeOomolConsoleAction(
   }
 }
 
+async function listTeamConnections(
+  teamId: string,
+  accessToken: string,
+  fetcher: typeof fetch,
+  endpoints: OomolConsoleEndpoints,
+) {
+  return asArray(
+    await requestOomolConsole({
+      endpoints,
+      endpoint: "connector",
+      path: "/v1/connections",
+      accessToken,
+      fetcher,
+      teamId,
+    }),
+    "Connection list",
+  ).map(parseConnection);
+}
+
+async function getTeamConnection(
+  appId: string,
+  teamId: string,
+  accessToken: string,
+  fetcher: typeof fetch,
+  endpoints: OomolConsoleEndpoints,
+) {
+  return parseConnection(
+    await requestOomolConsole({
+      endpoints,
+      endpoint: "connector",
+      path: `/v1/connections/by-id/${encodeURIComponent(appId)}`,
+      accessToken,
+      fetcher,
+      teamId,
+    }),
+  );
+}
+
+function parseConnection(value: unknown): ConnectionView {
+  const connection = asRecord(value, "Connection");
+  return {
+    appId: readString(connection.id, "Connection.id"),
+    service: readString(connection.service, "Connection.service"),
+    displayName: readString(connection.displayName, "Connection.displayName"),
+    alias: readNullableString(connection.alias, "Connection.alias"),
+    accountLabel: readNullableString(connection.accountLabel, "Connection.accountLabel"),
+    status:
+      connection.status == null
+        ? null
+        : readEnum(
+            connection.status,
+            ["active", "reauth_required", "error", "disconnected"] as const,
+            "Connection.status",
+          ),
+    isDefault: readBoolean(connection.isDefault, "Connection.isDefault"),
+  };
+}
+
+async function requireTeamManager(
+  context: OomolConsoleContext,
+  teamId: string,
+  accessToken: string,
+  fetcher: typeof fetch,
+  endpoints: OomolConsoleEndpoints,
+) {
+  requireUserPrincipal(context, "Connection permission groups require an OOMOL user principal");
+  const team = await getTeam(teamId, accessToken, fetcher, endpoints);
+  const manager = team.role === "creator" || team.role === "admin";
+  if (!manager) {
+    throw new ProviderRequestError(403, "Connection permission groups require a team creator or administrator");
+  }
+}
+
+async function loadPermissionGroupsContext(
+  context: OomolConsoleContext,
+  appId: string,
+  accessToken: string,
+  fetcher: typeof fetch,
+  endpoints: OomolConsoleEndpoints,
+): Promise<PermissionGroupsContext> {
+  const teamId = requireTeamId(context);
+  await requireTeamManager(context, teamId, accessToken, fetcher, endpoints);
+  const [connection, members, policyResponse] = await Promise.all([
+    getTeamConnection(appId, teamId, accessToken, fetcher, endpoints),
+    listTeamMembers(teamId, accessToken, fetcher, endpoints),
+    requestOomolConsoleWithResponse({
+      endpoints,
+      endpoint: "relationControl",
+      path: `/v1/teams/${encodeURIComponent(teamId)}/app-access`,
+      accessToken,
+      fetcher,
+    }),
+  ]);
+  if (connection.appId !== appId) {
+    throw invalidResponse("Connection.id does not match the requested appId");
+  }
+  const revision = policyResponse.response.headers.get("etag")?.trim();
+  if (!revision) {
+    throw invalidResponse("team app-access did not return an ETag revision");
+  }
+  const policy = asRecord(policyResponse.data, "team app-access");
+  const parsed = parseConnectionPermissionGroups(
+    policy,
+    { appId, service: connection.service },
+    members.map((member) => member.userId),
+  );
+  if (!parsed.ok) {
+    throw invalidResponse("Connection permission groups are malformed and need repair");
+  }
+  const availableActions = await listConfigurableActions(connection.service, teamId, accessToken, fetcher, endpoints);
+  return {
+    connection,
+    members,
+    availableActions,
+    policy,
+    revision,
+    state: parsed.value,
+  };
+}
+
+async function listConfigurableActions(
+  service: string,
+  teamId: string,
+  accessToken: string,
+  fetcher: typeof fetch,
+  endpoints: OomolConsoleEndpoints,
+) {
+  return asArray(
+    await requestOomolConsole({
+      endpoints,
+      endpoint: "connector",
+      path: "/v1/actions",
+      accessToken,
+      fetcher,
+      teamId,
+      query: { service },
+    }),
+    "Connection action list",
+  ).map((value): ConfigurableActionView => {
+    const action = asRecord(value, "Connection action");
+    const name = readString(action.name, "Connection action.name");
+    return {
+      name,
+      description: readString(action.description, "Connection action.description"),
+      operationType: readEnum(
+        action.operationType,
+        ["read", "write", "destructive"] as const,
+        "Connection action.operationType",
+      ),
+      configurable: name !== "call_tool",
+    };
+  });
+}
+
+function buildPermissionGroupsSnapshot(context: PermissionGroupsContext) {
+  return {
+    connection: context.connection,
+    revision: context.revision,
+    ...toPermissionGroupsView(context.state),
+    members: context.members,
+    availableActions: context.availableActions,
+  };
+}
+
+type PermissionMutationActionName =
+  | "update_connection_default_permission_group"
+  | "create_connection_permission_group"
+  | "update_connection_permission_group"
+  | "delete_connection_permission_group";
+
+async function mutateConnectionPermissionGroups(
+  actionName: PermissionMutationActionName,
+  input: Record<string, unknown>,
+  context: OomolConsoleContext,
+  accessToken: string,
+  fetcher: typeof fetch,
+  endpoints: OomolConsoleEndpoints,
+  memberDirectory: OomolConsoleMemberDirectory,
+) {
+  const appId = requireString(input.appId, "appId");
+  const expectedRevision = requireString(input.revision, "revision");
+  const loaded = await loadPermissionGroupsContext(context, appId, accessToken, fetcher, endpoints);
+  if (loaded.revision !== expectedRevision) {
+    throw new ProviderRequestError(
+      409,
+      "The Connection permission-group revision is stale; list the permission groups again",
+    );
+  }
+
+  let state = structuredClone(loaded.state);
+  let createdGroupId: string | undefined;
+  let updatedSourceGroupId: string | undefined;
+  let deletedGroupId: string | undefined;
+  let affectedMemberIds: string[] | undefined;
+  switch (actionName) {
+    case "update_connection_default_permission_group":
+      state.defaultGroup.actionPermission = parseActionPermissionInput(input.actionPermission, loaded.availableActions);
+      break;
+    case "create_connection_permission_group": {
+      const groupId = randomPermissionGroupId();
+      createdGroupId = groupId;
+      const memberIds = parseMemberIdsInput(input.memberIds, loaded.members);
+      state.groups.push({
+        groupId,
+        name: requireString(input.name, "name"),
+        memberIds,
+        actionPermission: parseActionPermissionInput(input.actionPermission, loaded.availableActions),
+      });
+      state = replacePermissionGroupMembers(state, groupId, memberIds);
+      break;
+    }
+    case "update_connection_permission_group": {
+      const groupId = requireString(input.groupId, "groupId");
+      const group = state.groups.find((item) => item.groupId === groupId);
+      if (!group) {
+        throw new ProviderRequestError(404, `Unknown permission group: ${groupId}`);
+      }
+      updatedSourceGroupId = groupId;
+      const memberIds = parseMemberIdsInput(input.memberIds, loaded.members);
+      group.name = requireString(input.name, "name");
+      group.actionPermission = parseActionPermissionInput(input.actionPermission, loaded.availableActions);
+      state = replacePermissionGroupMembers(state, groupId, memberIds);
+      break;
+    }
+    case "delete_connection_permission_group": {
+      const groupId = requireString(input.groupId, "groupId");
+      const group = state.groups.find((item) => item.groupId === groupId);
+      if (!group) {
+        throw new ProviderRequestError(404, `Unknown permission group: ${groupId}`);
+      }
+      deletedGroupId = groupId;
+      affectedMemberIds = group.memberIds;
+      state.groups = state.groups.filter((item) => item.groupId !== groupId);
+      break;
+    }
+  }
+
+  const serialized = serializeConnectionPermissionGroups(
+    loaded.policy,
+    { appId, service: loaded.connection.service },
+    state,
+  );
+  const teamId = requireTeamId(context);
+  const write = await requestOomolConsoleWithResponse({
+    endpoints,
+    endpoint: "relationControl",
+    path: `/v1/teams/${encodeURIComponent(teamId)}/app-access`,
+    accessToken,
+    fetcher,
+    method: "PUT",
+    headers: { "if-match": loaded.revision },
+    body: serialized.policy,
+  });
+  const revision = write.response.headers.get("etag")?.trim();
+  if (!revision) {
+    throw invalidResponse("updated team app-access did not return an ETag revision");
+  }
+  const writtenPolicy = write.data === undefined ? serialized.policy : asRecord(write.data, "team app-access");
+  const reparsed = parseConnectionPermissionGroups(
+    writtenPolicy,
+    { appId, service: loaded.connection.service },
+    loaded.members.map((member) => member.userId),
+  );
+  if (!reparsed.ok) {
+    throw invalidResponse("updated Connection permission groups are malformed");
+  }
+  const snapshot = buildPermissionGroupsSnapshot({
+    ...loaded,
+    members: await memberDirectory.enrichMembers(loaded.members, accessToken, fetcher),
+    revision,
+    policy: writtenPolicy,
+    state: reparsed.value,
+  });
+  if (createdGroupId) return { ...snapshot, createdGroupId };
+  if (updatedSourceGroupId) {
+    return {
+      ...snapshot,
+      updatedGroupId: serialized.canonicalGroupIds.get(updatedSourceGroupId) ?? updatedSourceGroupId,
+    };
+  }
+  if (deletedGroupId && affectedMemberIds) {
+    return { ...snapshot, deletedGroupId, affectedMemberIds };
+  }
+  return snapshot;
+}
+
+function parseActionPermissionInput(
+  value: unknown,
+  availableActions: readonly ConfigurableActionView[],
+): ConnectionActionPermission {
+  const permission = asRecord(value, "actionPermission");
+  if (permission.mode === "all") return { mode: "all" };
+  if (permission.mode === "none") return { mode: "none" };
+  if (permission.mode !== "selected" || !Array.isArray(permission.actionNames)) {
+    throw new ProviderRequestError(400, "actionPermission is invalid");
+  }
+  const configurable = new Set(availableActions.filter((action) => action.configurable).map((action) => action.name));
+  const actionNames = permission.actionNames.map((name) => requireString(name, "actionName"));
+  for (const actionName of actionNames) {
+    if (!configurable.has(actionName)) {
+      throw new ProviderRequestError(400, `Action cannot be selected for this Connection: ${actionName}`);
+    }
+  }
+  return { mode: "selected", actionNames: actionNames.toSorted() };
+}
+
+function parseMemberIdsInput(value: unknown, members: readonly TeamMemberView[]) {
+  const currentMembers = new Set(members.map((member) => member.userId));
+  return asArray(value, "memberIds")
+    .map((memberId) => requireString(memberId, "memberId"))
+    .toSorted()
+    .map((memberId) => {
+      if (!currentMembers.has(memberId)) {
+        throw new ProviderRequestError(400, `Member does not belong to the current team: ${memberId}`);
+      }
+      return memberId;
+    });
+}
+
+function randomPermissionGroupId() {
+  return randomUUIDv7();
+}
+
 function requireOomolToken(context: OomolConsoleContext) {
-  const token = context.accessToken.trim();
+  const token = context.accessToken?.trim();
   if (!token) {
-    throw new ProviderRequestError(400, "OOMOL access token is required");
+    throw new ProviderRequestError(400, "x-oomol-token header is required");
   }
   return token;
 }
 
 function requireTeamId(context: OomolConsoleContext) {
-  const teamId = context?.teamId?.trim();
+  const teamId = context.teamId?.trim();
   if (!teamId) {
-    throw new ProviderRequestError(400, "A default OOMOL team ID is required for this action");
+    throw new ProviderRequestError(400, "current OOMOL team scope is required");
   }
   return teamId;
 }
@@ -212,13 +608,13 @@ function requireUserPrincipal(context: OomolConsoleContext, message: string) {
   }
 }
 
-async function listTeams(oomolToken: string, fetcher: typeof fetch, endpoints: OomolConsoleEndpoints) {
+async function listTeams(accessToken: string, fetcher: typeof fetch, endpoints: OomolConsoleEndpoints) {
   const payload = asRecord(
     await requestOomolConsole({
       endpoints,
       endpoint: "relationControl",
       path: "/v1/me/teams",
-      accessToken: oomolToken,
+      accessToken,
       fetcher,
     }),
     "team list",
@@ -227,13 +623,13 @@ async function listTeams(oomolToken: string, fetcher: typeof fetch, endpoints: O
   return teams.toSorted((left, right) => Number(Boolean(right.systemCreated)) - Number(Boolean(left.systemCreated)));
 }
 
-async function getTeam(teamId: string, oomolToken: string, fetcher: typeof fetch, endpoints: OomolConsoleEndpoints) {
+async function getTeam(teamId: string, accessToken: string, fetcher: typeof fetch, endpoints: OomolConsoleEndpoints) {
   return parseTeam(
     await requestOomolConsole({
       endpoints,
       endpoint: "relationControl",
       path: `/v1/teams/${encodeURIComponent(teamId)}`,
-      accessToken: oomolToken,
+      accessToken,
       fetcher,
     }),
   );
@@ -255,7 +651,7 @@ function parseTeam(value: unknown): TeamView {
 
 async function listTeamMembers(
   teamId: string,
-  oomolToken: string,
+  accessToken: string,
   fetcher: typeof fetch,
   endpoints: OomolConsoleEndpoints,
 ) {
@@ -264,7 +660,7 @@ async function listTeamMembers(
       endpoints,
       endpoint: "relationControl",
       path: `/v1/teams/${encodeURIComponent(teamId)}/members`,
-      accessToken: oomolToken,
+      accessToken,
       fetcher,
     }),
     "team members",
@@ -298,7 +694,7 @@ function summarizeMembers(members: TeamMemberView[]) {
 }
 
 async function getAllAvailableBalance(
-  oomolToken: string,
+  accessToken: string,
   fetcher: typeof fetch,
   endpoints: OomolConsoleEndpoints,
 ): Promise<BalanceView> {
@@ -317,7 +713,7 @@ async function getAllAvailableBalance(
         endpoints,
         endpoint: "insight",
         path: "/v1/balance/available",
-        accessToken: oomolToken,
+        accessToken,
         fetcher,
         query: { nextToken: nextToken ?? undefined },
       }),
@@ -392,7 +788,7 @@ function createPeriod(input: Record<string, unknown>, endTime: number): BillingP
 
 async function getBillingStats(
   period: BillingPeriod,
-  oomolToken: string,
+  accessToken: string,
   fetcher: typeof fetch,
   endpoints: OomolConsoleEndpoints,
 ) {
@@ -401,7 +797,7 @@ async function getBillingStats(
       endpoints,
       endpoint: "insight",
       path: "/v2/stats/billing",
-      accessToken: oomolToken,
+      accessToken,
       fetcher,
       query: {
         granularity: "daily",
@@ -418,7 +814,7 @@ async function getBillingStats(
 
 async function getMeteringStats(
   period: BillingPeriod,
-  oomolToken: string,
+  accessToken: string,
   fetcher: typeof fetch,
   endpoints: OomolConsoleEndpoints,
 ) {
@@ -427,7 +823,7 @@ async function getMeteringStats(
       endpoints,
       endpoint: "insight",
       path: "/v2/stats/metering",
-      accessToken: oomolToken,
+      accessToken,
       fetcher,
       query: {
         granularity: "daily",
