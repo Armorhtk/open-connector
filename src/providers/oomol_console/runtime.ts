@@ -13,10 +13,8 @@ import {
 import { requestOomolConsole, requestOomolConsoleWithResponse } from "./request.ts";
 import { randomUUIDv7 } from "./uuid-v7.ts";
 
-type OomolPrincipalKind = "user" | "service_account" | "team_token";
-
 export interface OomolConsoleContext {
-  accessToken: string;
+  apiKey: string;
   teamId?: string;
   fetcher: typeof fetch;
   signal?: AbortSignal;
@@ -110,29 +108,26 @@ export async function executeOomolConsoleAction(
   fetcher: typeof fetch,
   deps: OomolConsoleRuntimeDeps,
 ): Promise<unknown> {
-  const accessToken = requireOomolToken(context);
+  const apiKey = requireApiKey(context);
 
   switch (actionName) {
     case "get_current_scope": {
       const teamId = requireTeamId(context);
-      const team = await getTeam(teamId, accessToken, fetcher, deps.endpoints);
-      const kind = getPrincipalKind(context);
+      const team = await getTeam(teamId, apiKey, fetcher, deps.endpoints);
       return {
         scope: { kind: "team", team },
-        principal: { kind },
       };
     }
     case "list_teams": {
-      requireAccountPrincipal(context);
       return {
-        teams: await listTeams(accessToken, fetcher, deps.endpoints),
+        teams: await listTeams(apiKey, fetcher, deps.endpoints),
       };
     }
     case "get_team_summary": {
       const teamId = requireTeamId(context);
       const [team, members] = await Promise.all([
-        getTeam(teamId, accessToken, fetcher, deps.endpoints),
-        listTeamMembers(teamId, accessToken, fetcher, deps.endpoints),
+        getTeam(teamId, apiKey, fetcher, deps.endpoints),
+        listTeamMembers(teamId, apiKey, fetcher, deps.endpoints),
       ]);
       return {
         team,
@@ -140,19 +135,17 @@ export async function executeOomolConsoleAction(
       };
     }
     case "get_balance": {
-      requireAccountPrincipal(context);
       return {
         scope: "account",
-        ...(await getAllAvailableBalance(accessToken, fetcher, deps.endpoints)),
+        ...(await getAllAvailableBalance(apiKey, fetcher, deps.endpoints)),
       };
     }
     case "get_billing_summary": {
-      requireAccountPrincipal(context);
       const period = createPeriod(input, deps.now?.() ?? Date.now());
       const [balance, billing, metering] = await Promise.all([
-        getAllAvailableBalance(accessToken, fetcher, deps.endpoints),
-        getBillingStats(period, accessToken, fetcher, deps.endpoints),
-        getMeteringStats(period, accessToken, fetcher, deps.endpoints),
+        getAllAvailableBalance(apiKey, fetcher, deps.endpoints),
+        getBillingStats(period, apiKey, fetcher, deps.endpoints),
+        getMeteringStats(period, apiKey, fetcher, deps.endpoints),
       ]);
       return {
         scope: "account",
@@ -171,37 +164,35 @@ export async function executeOomolConsoleAction(
       };
     }
     case "get_usage_breakdown": {
-      requireAccountPrincipal(context);
       const period = createPeriod(input, deps.now?.() ?? Date.now());
-      const metering = await getMeteringStats(period, accessToken, fetcher, deps.endpoints);
+      const metering = await getMeteringStats(period, apiKey, fetcher, deps.endpoints);
       return { scope: "account", ...metering };
     }
     case "list_members": {
       const teamId = requireTeamId(context);
-      const members = await listTeamMembers(teamId, accessToken, fetcher, deps.endpoints);
+      const members = await listTeamMembers(teamId, apiKey, fetcher, deps.endpoints);
       return {
-        members: await deps.memberDirectory.enrichMembers(members, accessToken, fetcher),
+        members: await deps.memberDirectory.enrichMembers(members, apiKey, fetcher),
       };
     }
     case "list_team_connections": {
-      requireUserPrincipal(context, "Connection management requires an OOMOL user principal");
       const teamId = requireTeamId(context);
-      await requireTeamManager(context, teamId, accessToken, fetcher, deps.endpoints);
+      await requireTeamManager(teamId, apiKey, fetcher, deps.endpoints);
       return {
-        connections: await listTeamConnections(teamId, accessToken, fetcher, deps.endpoints),
+        connections: await listTeamConnections(teamId, apiKey, fetcher, deps.endpoints),
       };
     }
     case "list_connection_permission_groups": {
       const permissionContext = await loadPermissionGroupsContext(
         context,
         requireString(input.appId, "appId"),
-        accessToken,
+        apiKey,
         fetcher,
         deps.endpoints,
       );
       return buildPermissionGroupsSnapshot({
         ...permissionContext,
-        members: await deps.memberDirectory.enrichMembers(permissionContext.members, accessToken, fetcher),
+        members: await deps.memberDirectory.enrichMembers(permissionContext.members, apiKey, fetcher),
       });
     }
     case "update_connection_default_permission_group":
@@ -212,21 +203,20 @@ export async function executeOomolConsoleAction(
         actionName,
         input,
         context,
-        accessToken,
+        apiKey,
         fetcher,
         deps.endpoints,
         deps.memberDirectory,
       );
     }
     case "add_member": {
-      requireUserPrincipal(context, "Adding an OOMOL team member requires a user principal");
       const teamId = requireTeamId(context);
       const userId = requireString(input.userId, "userId");
       await requestOomolConsole({
         endpoints: deps.endpoints,
         endpoint: "relationControl",
         path: `/v1/teams/${encodeURIComponent(teamId)}/members`,
-        accessToken,
+        apiKey,
         fetcher,
         method: "POST",
         body: { user_id: userId, role: "member" },
@@ -234,14 +224,13 @@ export async function executeOomolConsoleAction(
       return { added: true, teamId, userId, role: "member" };
     }
     case "list_connection_executions": {
-      requireUserPrincipal(context, "Connection execution records require an OOMOL user principal");
       const teamId = requireTeamId(context);
       const appId = requireString(input.appId, "appId");
       return requestOomolConsole({
         endpoints: deps.endpoints,
         endpoint: "connector",
         path: `/v1/connections/by-id/${encodeURIComponent(appId)}/executions`,
-        accessToken,
+        apiKey,
         fetcher,
         teamId,
         query: {
@@ -257,7 +246,7 @@ export async function executeOomolConsoleAction(
 
 async function listTeamConnections(
   teamId: string,
-  accessToken: string,
+  apiKey: string,
   fetcher: typeof fetch,
   endpoints: OomolConsoleEndpoints,
 ) {
@@ -266,7 +255,7 @@ async function listTeamConnections(
       endpoints,
       endpoint: "connector",
       path: "/v1/connections",
-      accessToken,
+      apiKey,
       fetcher,
       teamId,
     }),
@@ -277,7 +266,7 @@ async function listTeamConnections(
 async function getTeamConnection(
   appId: string,
   teamId: string,
-  accessToken: string,
+  apiKey: string,
   fetcher: typeof fetch,
   endpoints: OomolConsoleEndpoints,
 ) {
@@ -286,7 +275,7 @@ async function getTeamConnection(
       endpoints,
       endpoint: "connector",
       path: `/v1/connections/by-id/${encodeURIComponent(appId)}`,
-      accessToken,
+      apiKey,
       fetcher,
       teamId,
     }),
@@ -314,14 +303,12 @@ function parseConnection(value: unknown): ConnectionView {
 }
 
 async function requireTeamManager(
-  context: OomolConsoleContext,
   teamId: string,
-  accessToken: string,
+  apiKey: string,
   fetcher: typeof fetch,
   endpoints: OomolConsoleEndpoints,
 ) {
-  requireUserPrincipal(context, "Connection permission groups require an OOMOL user principal");
-  const team = await getTeam(teamId, accessToken, fetcher, endpoints);
+  const team = await getTeam(teamId, apiKey, fetcher, endpoints);
   const manager = team.role === "creator" || team.role === "admin";
   if (!manager) {
     throw new ProviderRequestError(403, "Connection permission groups require a team creator or administrator");
@@ -331,20 +318,20 @@ async function requireTeamManager(
 async function loadPermissionGroupsContext(
   context: OomolConsoleContext,
   appId: string,
-  accessToken: string,
+  apiKey: string,
   fetcher: typeof fetch,
   endpoints: OomolConsoleEndpoints,
 ): Promise<PermissionGroupsContext> {
   const teamId = requireTeamId(context);
-  await requireTeamManager(context, teamId, accessToken, fetcher, endpoints);
+  await requireTeamManager(teamId, apiKey, fetcher, endpoints);
   const [connection, members, policyResponse] = await Promise.all([
-    getTeamConnection(appId, teamId, accessToken, fetcher, endpoints),
-    listTeamMembers(teamId, accessToken, fetcher, endpoints),
+    getTeamConnection(appId, teamId, apiKey, fetcher, endpoints),
+    listTeamMembers(teamId, apiKey, fetcher, endpoints),
     requestOomolConsoleWithResponse({
       endpoints,
       endpoint: "relationControl",
       path: `/v1/teams/${encodeURIComponent(teamId)}/app-access`,
-      accessToken,
+      apiKey,
       fetcher,
     }),
   ]);
@@ -364,7 +351,7 @@ async function loadPermissionGroupsContext(
   if (!parsed.ok) {
     throw invalidResponse("Connection permission groups are malformed and need repair");
   }
-  const availableActions = await listConfigurableActions(connection.service, teamId, accessToken, fetcher, endpoints);
+  const availableActions = await listConfigurableActions(connection.service, teamId, apiKey, fetcher, endpoints);
   return {
     connection,
     members,
@@ -378,7 +365,7 @@ async function loadPermissionGroupsContext(
 async function listConfigurableActions(
   service: string,
   teamId: string,
-  accessToken: string,
+  apiKey: string,
   fetcher: typeof fetch,
   endpoints: OomolConsoleEndpoints,
 ) {
@@ -387,7 +374,7 @@ async function listConfigurableActions(
       endpoints,
       endpoint: "connector",
       path: "/v1/actions",
-      accessToken,
+      apiKey,
       fetcher,
       teamId,
       query: { service },
@@ -429,14 +416,14 @@ async function mutateConnectionPermissionGroups(
   actionName: PermissionMutationActionName,
   input: Record<string, unknown>,
   context: OomolConsoleContext,
-  accessToken: string,
+  apiKey: string,
   fetcher: typeof fetch,
   endpoints: OomolConsoleEndpoints,
   memberDirectory: OomolConsoleMemberDirectory,
 ) {
   const appId = requireString(input.appId, "appId");
   const expectedRevision = requireString(input.revision, "revision");
-  const loaded = await loadPermissionGroupsContext(context, appId, accessToken, fetcher, endpoints);
+  const loaded = await loadPermissionGroupsContext(context, appId, apiKey, fetcher, endpoints);
   if (loaded.revision !== expectedRevision) {
     throw new ProviderRequestError(
       409,
@@ -502,7 +489,7 @@ async function mutateConnectionPermissionGroups(
     endpoints,
     endpoint: "relationControl",
     path: `/v1/teams/${encodeURIComponent(teamId)}/app-access`,
-    accessToken,
+    apiKey,
     fetcher,
     method: "PUT",
     headers: { "if-match": loaded.revision },
@@ -523,7 +510,7 @@ async function mutateConnectionPermissionGroups(
   }
   const snapshot = buildPermissionGroupsSnapshot({
     ...loaded,
-    members: await memberDirectory.enrichMembers(loaded.members, accessToken, fetcher),
+    members: await memberDirectory.enrichMembers(loaded.members, apiKey, fetcher),
     revision,
     policy: writtenPolicy,
     state: reparsed.value,
@@ -578,12 +565,12 @@ function randomPermissionGroupId() {
   return randomUUIDv7();
 }
 
-function requireOomolToken(context: OomolConsoleContext) {
-  const token = context.accessToken?.trim();
-  if (!token) {
-    throw new ProviderRequestError(400, "x-oomol-token header is required");
+function requireApiKey(context: OomolConsoleContext) {
+  const apiKey = context.apiKey?.trim();
+  if (!apiKey) {
+    throw new ProviderRequestError(400, "OOMOL API key is required");
   }
-  return token;
+  return apiKey;
 }
 
 function requireTeamId(context: OomolConsoleContext) {
@@ -594,27 +581,13 @@ function requireTeamId(context: OomolConsoleContext) {
   return teamId;
 }
 
-function getPrincipalKind(_context: OomolConsoleContext): OomolPrincipalKind {
-  return "user";
-}
-
-function requireAccountPrincipal(context: OomolConsoleContext) {
-  requireUserPrincipal(context, "This OOMOL account action requires a user principal");
-}
-
-function requireUserPrincipal(context: OomolConsoleContext, message: string) {
-  if (getPrincipalKind(context) !== "user") {
-    throw new ProviderRequestError(403, message);
-  }
-}
-
-async function listTeams(accessToken: string, fetcher: typeof fetch, endpoints: OomolConsoleEndpoints) {
+async function listTeams(apiKey: string, fetcher: typeof fetch, endpoints: OomolConsoleEndpoints) {
   const payload = asRecord(
     await requestOomolConsole({
       endpoints,
       endpoint: "relationControl",
       path: "/v1/me/teams",
-      accessToken,
+      apiKey,
       fetcher,
     }),
     "team list",
@@ -623,13 +596,13 @@ async function listTeams(accessToken: string, fetcher: typeof fetch, endpoints: 
   return teams.toSorted((left, right) => Number(Boolean(right.systemCreated)) - Number(Boolean(left.systemCreated)));
 }
 
-async function getTeam(teamId: string, accessToken: string, fetcher: typeof fetch, endpoints: OomolConsoleEndpoints) {
+async function getTeam(teamId: string, apiKey: string, fetcher: typeof fetch, endpoints: OomolConsoleEndpoints) {
   return parseTeam(
     await requestOomolConsole({
       endpoints,
       endpoint: "relationControl",
       path: `/v1/teams/${encodeURIComponent(teamId)}`,
-      accessToken,
+      apiKey,
       fetcher,
     }),
   );
@@ -651,7 +624,7 @@ function parseTeam(value: unknown): TeamView {
 
 async function listTeamMembers(
   teamId: string,
-  accessToken: string,
+  apiKey: string,
   fetcher: typeof fetch,
   endpoints: OomolConsoleEndpoints,
 ) {
@@ -660,7 +633,7 @@ async function listTeamMembers(
       endpoints,
       endpoint: "relationControl",
       path: `/v1/teams/${encodeURIComponent(teamId)}/members`,
-      accessToken,
+      apiKey,
       fetcher,
     }),
     "team members",
@@ -694,7 +667,7 @@ function summarizeMembers(members: TeamMemberView[]) {
 }
 
 async function getAllAvailableBalance(
-  accessToken: string,
+  apiKey: string,
   fetcher: typeof fetch,
   endpoints: OomolConsoleEndpoints,
 ): Promise<BalanceView> {
@@ -713,7 +686,7 @@ async function getAllAvailableBalance(
         endpoints,
         endpoint: "insight",
         path: "/v1/balance/available",
-        accessToken,
+        apiKey,
         fetcher,
         query: { nextToken: nextToken ?? undefined },
       }),
@@ -788,7 +761,7 @@ function createPeriod(input: Record<string, unknown>, endTime: number): BillingP
 
 async function getBillingStats(
   period: BillingPeriod,
-  accessToken: string,
+  apiKey: string,
   fetcher: typeof fetch,
   endpoints: OomolConsoleEndpoints,
 ) {
@@ -797,7 +770,7 @@ async function getBillingStats(
       endpoints,
       endpoint: "insight",
       path: "/v2/stats/billing",
-      accessToken,
+      apiKey,
       fetcher,
       query: {
         granularity: "daily",
@@ -814,7 +787,7 @@ async function getBillingStats(
 
 async function getMeteringStats(
   period: BillingPeriod,
-  accessToken: string,
+  apiKey: string,
   fetcher: typeof fetch,
   endpoints: OomolConsoleEndpoints,
 ) {
@@ -823,7 +796,7 @@ async function getMeteringStats(
       endpoints,
       endpoint: "insight",
       path: "/v2/stats/metering",
-      accessToken,
+      apiKey,
       fetcher,
       query: {
         granularity: "daily",

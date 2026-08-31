@@ -36,7 +36,7 @@ export async function requestOomolConsole(input: {
   endpoints: OomolConsoleEndpoints;
   endpoint: OomolConsoleEndpointName;
   path: string;
-  accessToken: string;
+  apiKey: string;
   fetcher: typeof fetch;
   method?: "GET" | "POST" | "PUT";
   query?: Record<string, string | number | string[] | undefined>;
@@ -52,7 +52,7 @@ export async function requestOomolConsoleWithResponse(input: {
   endpoints: OomolConsoleEndpoints;
   endpoint: OomolConsoleEndpointName;
   path: string;
-  accessToken: string;
+  apiKey: string;
   fetcher: typeof fetch;
   method?: "GET" | "POST" | "PUT";
   query?: Record<string, string | number | string[] | undefined>;
@@ -75,7 +75,7 @@ export async function requestOomolConsoleWithResponse(input: {
   const timeout = createProviderTimeout(undefined, input.timeoutMs ?? defaultRequestTimeoutMs);
   const headers = new Headers({
     accept: "application/json",
-    authorization: `Bearer ${input.accessToken}`,
+    authorization: `Bearer ${input.apiKey}`,
     "user-agent": providerUserAgent,
   });
   for (const [name, value] of new Headers(input.headers)) {
@@ -102,7 +102,7 @@ export async function requestOomolConsoleWithResponse(input: {
         throw createTimeoutError();
       }
       const detail =
-        error instanceof Error && error.message.trim() ? sanitizeUpstreamText(error.message, input.accessToken) : "";
+        error instanceof Error && error.message.trim() ? sanitizeUpstreamText(error.message, input.apiKey) : "";
       throw new ProviderRequestError(
         502,
         detail ? `OOMOL Console request failed: ${detail}` : "OOMOL Console request failed",
@@ -119,7 +119,7 @@ export async function requestOomolConsoleWithResponse(input: {
       throw new ProviderRequestError(502, "OOMOL Console response could not be read");
     }
     if (!response.ok) {
-      throw mapOomolConsoleError(response.status, payload, input.accessToken);
+      throw mapOomolConsoleError(response.status, payload, input.apiKey);
     }
     return { data: unwrapSuccessEnvelope(payload), response };
   } finally {
@@ -159,10 +159,9 @@ function createTimeoutError() {
   return new ProviderRequestError(504, "OOMOL Console request timed out");
 }
 
-function mapOomolConsoleError(status: number, payload: unknown, accessToken: string) {
+function mapOomolConsoleError(status: number, payload: unknown, apiKey: string) {
   const message =
-    sanitizeUpstreamText(readPayloadMessage(payload), accessToken) ||
-    `OOMOL Console request failed with status ${status}`;
+    sanitizeUpstreamText(readPayloadMessage(payload), apiKey) || `OOMOL Console request failed with status ${status}`;
   if (status === 401) {
     return new ProviderRequestError(401, message);
   }
@@ -186,8 +185,8 @@ function unwrapSuccessEnvelope(payload: unknown) {
   return record?.success === true && Object.hasOwn(record, "data") ? record.data : payload;
 }
 
-function sanitizeUpstreamText(value: string, accessToken: string) {
-  return accessToken ? value.replaceAll(accessToken, "[REDACTED]") : value;
+function sanitizeUpstreamText(value: string, apiKey: string) {
+  return apiKey ? value.replaceAll(apiKey, "[REDACTED]") : value;
 }
 
 function readPayloadMessage(payload: unknown) {

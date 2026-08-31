@@ -7,13 +7,7 @@ import type {
 import type { ProviderActionHandlers, ProviderActionName, ProviderRuntimeHandler } from "../provider-runtime.ts";
 import type { OomolConsoleContext } from "./runtime.ts";
 
-import { requiredString } from "../../core/cast.ts";
-import {
-  createProviderFetch,
-  defineProviderExecutors,
-  ProviderRequestError,
-  requireCustomCredential,
-} from "../provider-runtime.ts";
+import { createProviderFetch, defineProviderExecutors, requireApiKeyCredential } from "../provider-runtime.ts";
 import { createOomolConsoleMemberDirectory } from "./member-directory.ts";
 import { defaultEndpoints } from "./request.ts";
 import { executeOomolConsoleAction } from "./runtime.ts";
@@ -75,9 +69,9 @@ export const executors: ProviderExecutors = defineProviderExecutors<OomolConsole
   service,
   handlers: oomolConsoleActionHandlers,
   async createContext(context: ExecutionContext, fetcher: typeof fetch): Promise<OomolConsoleContext> {
-    const credential = await requireCustomCredential(context, service);
+    const credential = await requireApiKeyCredential(context, service);
     return {
-      accessToken: requiredString(credential.values.accessToken, "accessToken", badRequest),
+      apiKey: credential.apiKey,
       teamId: credential.values.teamId?.trim() || undefined,
       fetcher,
       signal: context.signal,
@@ -88,9 +82,9 @@ export const executors: ProviderExecutors = defineProviderExecutors<OomolConsole
 });
 
 export const credentialValidators: CredentialValidators = {
-  async customCredential(input, { fetcher, signal }): Promise<CredentialValidationResult> {
+  async apiKey(input, { fetcher, signal }): Promise<CredentialValidationResult> {
     const context: OomolConsoleContext = {
-      accessToken: requiredString(input.values.accessToken, "accessToken", badRequest),
+      apiKey: input.apiKey,
       teamId: input.values.teamId?.trim() || undefined,
       fetcher: createProviderFetch({ fetch: fetcher, skipDnsValidation: true }),
       signal,
@@ -126,8 +120,4 @@ function executeAction(
     endpoints: defaultEndpoints,
     memberDirectory,
   });
-}
-
-function badRequest(message: string): ProviderRequestError {
-  return new ProviderRequestError(400, message);
 }

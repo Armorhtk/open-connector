@@ -215,7 +215,7 @@ const billingWindowInputSchema = (description: string) =>
 export const oomolConsoleActions: readonly ProviderActionDefinition[] = [
   defineProviderAction(service, {
     name: "get_current_scope",
-    description: "Return the current OOMOL team scope and authenticated principal.",
+    description: "Return the current OOMOL team scope.",
     requiredScopes: [],
     inputSchema: emptyInputSchema("The input payload for reading the current OOMOL scope."),
     outputSchema: s.object("The current OOMOL execution scope.", {
@@ -223,14 +223,6 @@ export const oomolConsoleActions: readonly ProviderActionDefinition[] = [
         kind: s.literal("team", { description: "The execution scope kind." }),
         team: teamSchema,
       }),
-      principal: s.object(
-        "The principal authenticated for the current action execution.",
-        {
-          kind: s.stringEnum("The authenticated OOMOL principal type.", ["user", "service_account", "team_token"]),
-          id: s.string("The user or service-account identifier when one is available."),
-        },
-        { optional: ["id"] },
-      ),
     }),
   }),
   defineProviderAction(service, {

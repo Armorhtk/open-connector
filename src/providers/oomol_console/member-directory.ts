@@ -27,7 +27,7 @@ export interface OomolTeamMemberIdentity {
 export interface OomolConsoleMemberDirectory {
   enrichMembers<TMember extends OomolTeamMemberIdentity>(
     members: readonly TMember[],
-    accessToken: string,
+    apiKey: string,
     fetcher: typeof fetch,
   ): Promise<TMember[]>;
 }
@@ -38,7 +38,7 @@ export function createOomolConsoleMemberDirectory(endpoints: OomolConsoleEndpoin
   return {
     async enrichMembers<TMember extends OomolTeamMemberIdentity>(
       members: readonly TMember[],
-      accessToken: string,
+      apiKey: string,
       fetcher: typeof fetch,
     ) {
       const unresolvedUserIds = uniqueIds(
@@ -53,18 +53,14 @@ export function createOomolConsoleMemberDirectory(endpoints: OomolConsoleEndpoin
       );
 
       const [userSummaries, serviceAccountNames] = await Promise.all([
-        loadUserSummaries(unresolvedUserIds, accessToken, fetcher, endpoints, userSummaryCache).catch(
-          (error: unknown) => {
-            logger.warn(enrichmentErrorLog(error), "OOMOL Console user-summary enrichment failed");
-            return new Map<string, UserSummary>();
-          },
-        ),
-        loadServiceAccountNames(unresolvedServiceAccountIds, accessToken, fetcher, endpoints).catch(
-          (error: unknown) => {
-            logger.warn(enrichmentErrorLog(error), "OOMOL Console service-account enrichment failed");
-            return new Map<string, string>();
-          },
-        ),
+        loadUserSummaries(unresolvedUserIds, apiKey, fetcher, endpoints, userSummaryCache).catch((error: unknown) => {
+          logger.warn(enrichmentErrorLog(error), "OOMOL Console user-summary enrichment failed");
+          return new Map<string, UserSummary>();
+        }),
+        loadServiceAccountNames(unresolvedServiceAccountIds, apiKey, fetcher, endpoints).catch((error: unknown) => {
+          logger.warn(enrichmentErrorLog(error), "OOMOL Console service-account enrichment failed");
+          return new Map<string, string>();
+        }),
       ]);
 
       return members.map((member) => {
@@ -81,7 +77,7 @@ export function createOomolConsoleMemberDirectory(endpoints: OomolConsoleEndpoin
 
 async function loadUserSummaries(
   userIds: string[],
-  accessToken: string,
+  apiKey: string,
   fetcher: typeof fetch,
   endpoints: OomolConsoleEndpoints,
   cache: Map<string, CachedUserSummary>,
@@ -106,7 +102,7 @@ async function loadUserSummaries(
       endpoints,
       endpoint: "api",
       path: "/v1/users/summaries",
-      accessToken,
+      apiKey,
       fetcher,
       query: { user_ids: missingUserIds },
     }),
@@ -127,7 +123,7 @@ async function loadUserSummaries(
 
 async function loadServiceAccountNames(
   serviceAccountIds: string[],
-  accessToken: string,
+  apiKey: string,
   fetcher: typeof fetch,
   endpoints: OomolConsoleEndpoints,
 ) {
@@ -140,7 +136,7 @@ async function loadServiceAccountNames(
       endpoints,
       endpoint: "api",
       path: "/v1/service-accounts",
-      accessToken,
+      apiKey,
       fetcher,
     }),
   );
